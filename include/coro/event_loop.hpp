@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 16:13:18
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-16 13:59:45
+ * @LastEditTime: 2026-03-16 21:35:03
  * @FilePath: /MCoroRpc/include/coro/event_loop.hpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 #include "../utils/noncopyable.hpp"
+#include "../selector/epoll.hpp"
 namespace Coro {
     class Eventloop:private Noncopyable{
      
@@ -71,7 +72,7 @@ namespace Coro {
         ///@brief 定时器堆，存定时器对应的{id,和指针}
         std::vector<std::pair<Handle::ID, types::TimePoint>> m_scheduled;
         
-       
+        Epoll m_epoll{};
     };
     Eventloop &get_event_loop();
 }
