@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 16:12:59
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-16 13:33:28
+ * @LastEditTime: 2026-03-17 17:11:08
  * @FilePath: /MCoroRpc/include/coro/timer.hpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -32,10 +32,11 @@ namespace Coro {
 
         void cancel()noexcept override;
 
-        void abort();
+        void abort()noexcept;
         private:
         bool m_cancelled{false};
         types::TimePoint m_when;
         Callback m_callback;
+        uint64_t m_wait_id = 0;
     };
 }

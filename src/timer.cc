@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 18:48:30
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-16 14:55:50
+ * @LastEditTime: 2026-03-17 17:10:22
  * @FilePath: /MCoroRpc/src/timer.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -10,58 +10,40 @@
 #include <algorithm>
 #include <utility>
 namespace Coro {
-      Timer::Timer(types::TimePoint when,Callback callback)
-      :Handle()
-      ,m_when(when){
-            m_callback=std::move(callback);
-       }
+          Timer::Timer(types::TimePoint when, Callback callback)
+          : Handle(), m_when(when), m_callback(std::move(callback)) {}
 
-      Timer& Timer::operator=(Timer&& timer){
-        m_when=timer.m_when;
-        m_callback=std::exchange(timer.m_callback,nullptr);
-        return *this;
+      void Timer::start() {
+          m_wait_id = get_event_loop().call_at(m_when, *this, [this] { run(); });
       }
 
-      Timer::Timer(Timer&& other)
-      :Handle(std::move(other))
-      ,m_when(std::move(other.m_when)){
-        m_callback=std::exchange(other.m_callback,nullptr);
+      void Timer::run() {
+          if (m_cancelled) return;
+          m_cancelled = true;
+          auto cb = std::move(m_callback);
+          m_wait_id = 0;
+          if (cb) cb();
       }
 
+      void Timer::cancel() noexcept {
+          if (m_cancelled) return;
+          m_cancelled = true;
+          if (m_wait_id) {
+              if (auto cb = get_event_loop().cancel_wait(m_wait_id)) {
+                  (*cb)();  // 立即唤醒
+              }
+          }
+      }
 
-     void Timer::cancel()noexcept{
-         if(m_cancelled){
-          return;
-        }
-        m_cancelled=true;
-        get_event_loop().cancel(id());
-        if(m_callback){
-          m_callback();
-        }
-     }
+      void Timer::abort() noexcept {
+          if (m_cancelled) return;
+          m_cancelled = true;
+          if (m_wait_id) {
+              get_event_loop().cancel_wait(m_wait_id);
+          }
+      }
 
-     void Timer::run(){
-       if(m_cancelled){
-          return;
-        }
-        m_cancelled=true;
-        if(m_callback){
-          m_callback();
-        }
-     }
-
-     void Timer::start(){
-        get_event_loop().call_at(m_when,*this,[this](){this->run();});
-     }
-
-     void Timer::abort(){
-        if(m_cancelled){
-          return;
-        }
-        m_cancelled=true;
-        get_event_loop().cancel(id());
-     }
-     Timer::~Timer(){
-        
-     }
+      Timer::~Timer() {
+          abort();
+      }
 }       

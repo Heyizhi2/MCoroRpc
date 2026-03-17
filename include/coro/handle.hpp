@@ -2,13 +2,15 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 14:02:37
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-16 14:06:17
+ * @LastEditTime: 2026-03-17 16:03:50
  * @FilePath: /MCoroRpc/include/coro/handle.hpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
 #pragma once
+#include <coroutine>
 #include <cstdint>
 #include <source_location>
+#include <vector>
 namespace Coro {
     struct Handle{
         using ID=uint32_t;
@@ -45,6 +47,8 @@ namespace Coro {
     struct CoroHandle:public Handle{
         virtual void traceback(int depth)=0;
         void schedule();
+        void cancel()noexcept override;
+        std::vector<std::coroutine_handle<>> child;
         private:
         virtual const std::source_location &get_loc()const;
 

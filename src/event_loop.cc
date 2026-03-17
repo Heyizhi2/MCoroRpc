@@ -2,18 +2,24 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-16 09:50:30
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-16 15:24:50
+ * @LastEditTime: 2026-03-17 16:59:23
  * @FilePath: /MCoroRpc/src/event_loop.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
 #include "../include/coro.hpp"
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <optional>
+#include <sys/epoll.h>
 namespace Coro {
-    void Eventloop::call_soon(Handle& handle,Callback callback){
-        handle.set_state(Handle::State::SUSPEND);
+    uint64_t Eventloop::call_soon(Handle& handle,Callback callback){
+        auto wait_id=next_wait_id++;
         auto id=handle.id();
-        m_ready_handle.push(id);
-        m_callbacks.insert({id,std::move(callback)});    
+        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(callback));
+        m_coro_waits[id].insert(wait_id);
+        m_ready_queue.push(wait_id);
+        return wait_id;
     }
 
     Eventloop& get_event_loop(){
@@ -28,36 +34,137 @@ namespace Coro {
     }
 
     void Eventloop::run_once(){
-        auto now=types::Clock::now();
-        while(!m_scheduled.empty()&&m_scheduled[0].second<=now){
-            auto[id,when]=m_scheduled.front();
-            std::pop_heap(m_scheduled.begin(),m_scheduled.end(),[](auto &a,auto& b){
-                return a.second>b.second;
-            });
-            m_scheduled.pop_back();
-            m_ready_handle.push(id);
+        int timeout_ms=-1;
+        if(!m_ready_queue.empty()){
+            timeout_ms=0;
         }
-        while (!m_ready_handle.empty()) {
-            auto id=m_ready_handle.front();
-            m_ready_handle.pop();
-            auto it=m_callbacks.find(id);
-            if(it!=m_callbacks.end()){
-                auto func=std::move(it->second);
-                m_callbacks.erase(it);
-                if(func){
-                    func();
-                }
+        else if(!m_scheduled.empty()){
+            auto now=types::Clock::now();
+            auto next=m_scheduled[0].second;
+            if(next>now){
+                timeout_ms=std::chrono::duration_cast<std::chrono::milliseconds>(next-now).count();
+            }else {
+                timeout_ms=0;
+            }
+        }
+
+        process_epoll_event(timeout_ms);
+        process_expired_timeout();
+        execute_ready_callback();
+    }
+
+    uint64_t Eventloop::call_at(types::TimePoint when,Handle&handle,Callback cb){
+        auto wait_id=next_wait_id++;
+        auto id=handle.id();
+        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb));
+        m_coro_waits[id].insert(wait_id);
+        m_scheduled.emplace_back(wait_id,when);
+        std::push_heap(m_scheduled.begin(),m_scheduled.end(),[](auto& a,auto& b){
+            return a.second>b.second;
+        });
+        return wait_id;
+    }
+
+    void Eventloop::process_epoll_event(int timeout){
+        epoll_event events[100];
+        int n=m_epoll.wait(events,100,timeout);
+        for(int i=0;i<n;i++){
+            auto ev_ptr=static_cast<Event*>(events[i].data.ptr);
+            if(ev_ptr->reader!=0&&events[i].events&EPOLLIN){
+                m_ready_queue.push(ev_ptr->reader);
+            }
+            if(ev_ptr->writer!=0&&events[i].events&EPOLLOUT){
+                m_ready_queue.push(ev_ptr->writer);
             }
         }
     }
 
-    void Eventloop::call_at(types::TimePoint when,Handle&handle,Callback cb){
-        auto id=handle.id();
-        m_callbacks[id]=std::move(cb);
-        m_scheduled.emplace_back(id,when);
-        std::push_heap(m_scheduled.begin(),m_scheduled.end(),[](auto& a,auto& b){
-            return  a.second>b.second;
+    void Eventloop::process_expired_timeout(){
+        auto now=types::Clock::now();
+        while(!m_scheduled.empty()&&now>=m_scheduled[0].second){
+            auto[wait_id,when]=m_scheduled[0];
+            std::pop_heap(m_scheduled.begin(),m_scheduled.end(),[](auto& a,auto& b){
+                return a.second>b.second;
+            });
+            m_scheduled.pop_back();
+            m_ready_queue.push(wait_id);
+        }
+    }
+
+    void Eventloop::execute_ready_callback(){
+        while (!m_ready_queue.empty()) {
+            uint64_t wait_id=m_ready_queue.front();
+            m_ready_queue.pop();
+            auto it=m_wait_callback.find(wait_id);
+            if(it!=m_wait_callback.end()){
+                auto cb=std::move(it->second);
+                m_wait_callback.erase(it);
+                if(cb) cb();
+            }
+        }
+    }
+
+    Eventloop::Callback Eventloop::make_warped_callback(uint64_t wait_id,Handle::ID coro_id,Callback cb){
+        return [this,coro_id,wait_id,user_cb=std::move(cb)](){
+            user_cb();
+            auto it=m_coro_waits.find(coro_id);
+            if(it!=m_coro_waits.end()){
+                it->second.erase(wait_id);
+                if(it->second.empty()){
+                    m_coro_waits.erase(it);
+                }
+            }
+        };
+    }
+
+    void Eventloop::cancel(Handle::ID cancelled_id){
+        auto it=m_coro_waits.find(cancelled_id);
+        if(it==m_coro_waits.end()) return;
+        for (auto i:it->second) {
+            cancel_wait(i);
+        }
+        m_coro_waits.erase(it);
+    }
+
+    std::optional<Eventloop::Callback> Eventloop::cancel_wait(uint64_t wait_id){
+        m_wait_callback.erase(wait_id);
+        auto it=std::find_if(m_scheduled.begin(),m_scheduled.end(),[wait_id](auto&p){
+            return p.first==wait_id;
         });
-        handle.set_state(Handle::State::SCHEDULE);
+
+        auto cb_it=m_wait_callback.find(wait_id);
+        std::optional<Callback> res;
+        if(cb_it!=m_wait_callback.end()){
+            res=std::move(cb_it->second);
+            m_wait_callback.erase(cb_it);
+        }
+        //从 epoll 中移除
+        m_epoll.cancel_wait(wait_id);
+
+        if(it!=m_scheduled.end()){
+            m_scheduled.erase(it);
+            std::make_heap(m_scheduled.begin(),m_scheduled.end(),[](auto& a,auto& b){
+            return a.second>b.second;});
+        }
+
+        return res;
+    }
+
+    uint64_t Eventloop::add_writer(int fd,Handle& handle,Callback cb){
+        auto wait_id=next_wait_id++;
+        auto id=handle.id();
+        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb));
+        m_coro_waits[id].insert(wait_id);
+        m_epoll.add_writer(fd,wait_id);
+        return wait_id;
+    }
+        
+    uint64_t Eventloop::add_reader(int fd,Handle& handle,Callback cb){
+        auto wait_id=next_wait_id++;
+        auto id=handle.id();
+        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb));
+        m_coro_waits[id].insert(wait_id);
+        m_epoll.add_reader(fd, wait_id);
+        return wait_id;
     }
 }

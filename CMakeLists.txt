@@ -13,6 +13,7 @@ set(SOURCES
     src/event_loop.cc
     src/handle.cc
     src/timer.cc
+    src/epoll.cc
 )
 
 add_library(CoroRpc STATIC ${SOURCES})

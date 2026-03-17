@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:48:12
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-16 14:39:57
+ * @LastEditTime: 2026-03-17 16:44:23
  * @FilePath: /MCoroRpc/include/coro/task.hpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -45,11 +45,13 @@ namespace Coro {
             constexpr bool await_ready() const noexcept{return false;}
             template<typename  P>
             void await_suspend(std::coroutine_handle<P> handle) noexcept{
-                auto parent = handle.promise().parent();
-                if(parent){
-                    parent->set_state(Handle::State::SCHEDULE);
-                    get_event_loop().call_soon(*parent, [parent](){ parent->run(); });
-                }
+                  auto parent = handle.promise().parent();
+                    if (parent) {
+                        // 直接从父协程的 child 容器中移除当前子协程
+                        std::erase(parent->child, handle);
+                        parent->set_state(Handle::State::SCHEDULE);
+                        get_event_loop().call_soon(*parent, [parent]() { parent->run(); });
+                    }
             }
             constexpr void await_resume()const noexcept{}
         };
@@ -121,6 +123,7 @@ namespace Coro {
                 assert(!self_handle.promise().parent());
                 parent.promise().set_state(Handle::State::SUSPEND);
                 self_handle.promise().set_parent(&parent.promise());
+                parent.promise().child.push_back(self_handle);
                 self_handle.promise().schedule();
             }
             coro_handle self_handle{};
