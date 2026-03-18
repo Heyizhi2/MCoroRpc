@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-18 14:24:04
+ * @LastEditTime: 2026-03-18 21:32:20
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -125,3 +125,266 @@ add_reader/add_writer 现在允许覆盖已存在的 wait_id，而不是直接�
 开发效率大幅提升
 性能差距可接受
 协程版本适合大多数 IO 密集型应用，极致性能场景仍需原生 epoll。
+
+
+
+主要功能
+dispatch() - 分发 RPC 请求
+
+根据请求中的 method_name 找到对应的 protobuf 服务
+反序列化请求数据 (pb_data → req_msg)
+调用服务方法
+序列化响应数据 (rsp_msg → pb_data)
+发送响应回客户端
+registerService() - 注册 protobuf 服务
+
+将 google::protobuf::Service 注册到调度器
+setTinyPBError() - 设置错误响应
+
+填充错误码和错误信息
+parseServiceFullName() - 解析服务方法全名
+
+格式: ServiceName.MethodName
+拆分出 service_name 和 method_name
+调用流程
+客户端请求 → dispatch() 
+  → 查找 Service 
+  → 查找 Method 
+  → 反序列化 req_msg 
+  → CallMethod() 执行服务 
+  → 序列化 rsp_msg 
+  → reply() 响应客户端
+
+  这是 RPC 客户端通道 (RpcChannel)，负责发起 RPC 调用。
+
+核心作用
+作为 RPC 客户端代理，让客户端像调用本地方法一样调用远程服务。
+
+主要流程
+CallMethod() 被调用
+  ↓
+1. 创建 TinyPBProtocol 请求对象
+2. 序列化 request → req_protocol->m_pb_data
+3. 建立 TCP 连接 (TcpClient)
+4. 发送请求 (writeMessage)
+5. 设置超时定时器
+6. 接收响应 (readMessage)
+7. 反序列化 rsp_protocol->m_pb_data → response
+8. 执行回调 closure->Run()
+关键功能
+功能	说明
+服务发现	FindAddr() 从配置或字符串获取服务端地址
+超时控制	设置 TimerEvent，超时自动取消调用
+MsgID 透传	支持 msg_id 在服务间传递，方便日志追踪
+错误处理	连接失败、序列化失败、超时等错误处理
+与 RpcDispatcher 对应
+RpcChannel: 客户端发起调用
+RpcDispatcher: 服务端分发请求
+两者配合实现完整的 RPC 通信。
+
+架构设计
+┌─────────────────────────────────────────────────────────────┐
+│                      你的协程框架                              │
+├─────────────────────────────────────────────────────────────┤
+│  Task<T>  │  TcpStream  │  TcpService  │  TcpBuffer       │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      RPC 层                                  │
+├──────────────────────────┬──────────────────────────────────┤
+│    RpcChannel (Client)   │    RpcDispatcher (Server)        │
+│    - 发起 RPC 调用        │    - 分发请求到服务方法            │
+│    - 使用 co_await 等待   │    - 使用协程处理                 │
+└──────────────────────────┴──────────────────────────────────┘
+
+两者各司其职，都需要：
+
+EventLoop vs Channel
+职责	EventLoop	Channel
+作用	底层 I/O 事件驱动	协程间数据传递
+监听	epoll 网络 fd	无（内存操作）
+触发	系统 I/O 就绪	协程 send/recv
+对象	网络 fd	协程
+
+
+具体分工
+网络数据到达
+      ↓
+EventLoop (epoll 触发)
+      ↓
+读取数据到 TcpBuffer
+      ↓
+Channel::send(data)  ← 唤醒等待的协程
+      ↓
+协程被调度处理数据
+EventLoop 仍需处理
+网络 I/O - epoll 监听 fd 读写事件
+定时器 - 超时检测、心跳
+系统交互 - accept、connect 等
+Channel 解决
+协程挂起/唤醒 - 替代回调
+数据传递 - 协程间通信
+取消传播 - close() 唤醒所有
+
+
+不能完全替代，两者职责不同：
+
+分工明确
+谁唤醒	触发原因	Channel 能解决吗
+EventLoop	网络数据到达 (epoll)	❌ 不能
+Channel	buffer 满/空	✅ 可以
+流程
+网络数据到达
+      ↓
+EventLoop (epoll 监听 fd)
+      ↓  感知到可读事件
+读取数据 → Channel::send(data)
+      ↓
+等待中的协程被 Channel 唤醒  ← 这里不需要 EventLoop 了
+      ↓
+处理数据
+结论
+组件	职责	能否省略
+EventLoop	感知外部 I/O (epoll)	❌ 不能
+Channel	协程间传递数据 + 唤醒	✅ 可以简化唤醒逻辑
+
+架构分析
+当前 Task 和 EventLoop 关系
+┌─────────────────────────────────────────────────────────────┐
+│                        EventLoop                             │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   │
+│  │ m_ready_queue│   │ m_scheduled  │   │    epoll     │   │
+│  │  (待执行)    │   │   (定时器)    │   │  (网络I/O)   │   │
+│  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘   │
+└──────────┼──────────────────┼──────────────────┼───────────┘
+           │                  │                  │
+           ▼                  ▼                  ▼
+      call_soon()       call_at()      add_reader/add_writer
+           │                  │                  │
+           └──────────────────┴──────────────────┘
+                              │
+                    唤醒协程 (resume)
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │  Task 协程      │
+                    │  co_await ...  │
+                    └─────────────────┘
+
+
+Channel 唤醒机制对比
+等待类型	挂起位置	唤醒方式
+网络 I/O	await_suspend()	EventLoop epoll 回调
+定时器	await_suspend()	EventLoop 定时器到期
+Channel	await_suspend()	Channel 直接 resume()
+
+
+Channel 唤醒的优势
+之前：网络数据到达 → epoll → EventLoop → 回调 → resume 协程
+现在：网络数据到达 → epoll → 读取数据 → Channel::send → resume 协程
+                                                    ↑
+                                              减少中间环节
+
+重构后的架构
+┌─────────────────────────────────────────────────────────────┐
+│                        EventLoop                             │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐     │
+│  │ m_ready_queue│   │ m_scheduled  │   │    epoll     │     │
+│  └──────────────┘   └──────────────┘   └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+              ▼               ▼               ▼
+        call_soon()    Channel::send    Channel::recv
+              │               │               │
+              └───────────────┼───────────────┘
+                              │
+                    ┌─────────────────┐
+                    │    resume()     │
+                    │   唤醒协程       │
+                    └─────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │  Task 协程      │
+                    │  co_await ...  │
+                    └─────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                    Channel (协程 间)                        │
+│  ┌──────────────┐   ┌──────────────┐                       │
+│  │   buffer     │   │   waiters    │ ← 协程在此挂起        │
+│  └──────────────┘   └──────────────┘                       │
+│                                                              │
+│  close() → 唤醒所有 waiters → 协程被 EventLoop 调度        │
+└─────────────────────────────────────────────────────────────┘
+
+重构要点
+组件	改进
+AwaiterBase	添加 cancelled、completed 原子状态，支持 cancel()
+ReaderAwaiter	添加 resumeWithValue() 传递数据
+Channel	添加 cancelAllAwaiters() 关闭时取消所有等待者
+取消流程	cancel() → 标记状态 → resume() → await_resume() 抛出异常
+架构关系
+┌─────────────────────────────────────────────────────┐
+│                    EventLoop                         │
+│   I/O 事件 (epoll)  │  定时器  │  立即执行          │
+└─────────────────────────────────────────────────────┘
+                         │
+          ┌──────────────┼──────────────┐
+          │              │              │
+          ▼              ▼              ▼
+      call_soon     Channel::send   Channel::recv
+          │              │              │
+          └──────────────┼──────────────┘
+                         │
+                         ▼
+                  resume() 唤醒协程
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │     Task 协程       │
+              │  co_await Channel   │
+              └─────────────────────┘
+测试通过
+
+重构完成
+简化后的架构
+┌─────────────────────────────────────────────────────────────┐
+│                     Task (协程)                             │
+│  - 持有 cancel token (取消标志)                            │
+│  - parent 指针追踪父子关系                                  │
+│  - 取消时设置 cancelled = true，销毁协程                  │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Channel                                │
+│  - send/recv 实现协程间通信                                │
+│  - close() 唤醒所有等待的协程 (CancelledException)        │
+│  - AwaiterBase 支持 cancel() 原子操作                     │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   TaskGroup                                 │
+│  - 管理多个子 Task                                         │
+│  - cancel() 取消所有子 Task                                 │
+└─────────────────────────────────────────────────────────────┘
+移除的内容
+移除	原因
+child 向量	使用 Channel 替代父子协程通信
+复杂的取消传播	简化取消逻辑
+保留的功能
+功能	说明
+Task::cancel()	设置取消标志并销毁协程
+TaskGroup::cancel()	取消所有子 Task
+Channel::close()	唤醒所有等待协程
+测试结果
+All tests passed (4 assertions in 3 test cases)
+
+Benchmark: ~1.7-1.9M ops/s
+后续可增强
+如需更强的取消传播，可以在 Task 中添加 Channel<bool> 取消信号，子协程 co_await 该 Channel 以响应取消。但需要解决循环依赖问题。

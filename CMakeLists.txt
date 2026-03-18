@@ -28,6 +28,12 @@ target_link_libraries(test_task PRIVATE CoroRpc Catch2::Catch2WithMain)
 add_executable(test_tinypb_coder tests/test_tinypb_coder.cc)
 target_link_libraries(test_tinypb_coder PRIVATE CoroRpc Catch2::Catch2WithMain)
 
+add_executable(test_channel tests/test_channel.cc)
+target_link_libraries(test_channel PRIVATE CoroRpc Catch2::Catch2WithMain)
+
+add_executable(benchmark_channel tests/benchmark_channel.cc)
+target_link_libraries(benchmark_channel PRIVATE CoroRpc)
+
 add_executable(test_sleep tests/test_sleep.cc)
 target_link_libraries(test_sleep PRIVATE CoroRpc Catch2::Catch2WithMain)
 
