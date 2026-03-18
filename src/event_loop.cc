@@ -66,8 +66,8 @@ namespace Coro {
     }
 
     void Eventloop::process_epoll_event(int timeout){
-        epoll_event events[100];
-        int n=m_epoll.wait(events,100,timeout);
+        epoll_event events[10000];
+        int n=m_epoll.wait(events,10000,timeout);
         for(int i=0;i<n;i++){
             auto ev_ptr=static_cast<Event*>(events[i].data.ptr);
             if(ev_ptr->reader!=0&&events[i].events&EPOLLIN){

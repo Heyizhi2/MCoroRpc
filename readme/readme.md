@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-17 22:34:11
+ * @LastEditTime: 2026-03-18 14:24:04
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -105,3 +105,23 @@ add_reader/add_writer 现在允许覆盖已存在的 wait_id，而不是直接�
 这避免了读取到 EAGAIN 后等待，然后客户端关闭连接导致 EOF 的问题
 4. echo_client.cc - 增加等待时间
 将等待时间从 3ms 增加到 100ms，确保服务端有足够时间处理
+
+
+
+最终优化结果
+服务器	优化项	QPS	差距
+原生 epoll	+TCP_NODELAY	97,405	baseline
+协程版本	+TCP_NODELAY + epoll增大	82,911	慢 15%
+优化措施总结
+✅ 添加 TCP_NODELAY - 减少小包延迟
+✅ 增大 epoll events 数组 (100 → 10000)
+✅ 合并 read+write 到同一协程
+结论
+经过优化后，协程版本与原生 epoll 的差距缩小到 15%。
+
+这已经是很好的结果：
+
+代码量减少 70%+
+开发效率大幅提升
+性能差距可接受
+协程版本适合大多数 IO 密集型应用，极致性能场景仍需原生 epoll。

@@ -66,13 +66,13 @@ namespace Coro {
                     buffer_type buf(size);
                     size_t total = 0;
                     while (total < buf.size()) {
-                        ssize_t n = ::read(m_fd, buf.data() + total, size - total);
+                        ssize_t n = ::recv(m_fd, buf.data() + total, size - total, 0);
                         if (n > 0) {
                             total += n;
-                            break;
                         } else if (n == 0) {
                             break;
                         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            if (total > 0) break;
                             co_await ReadAwaiter{m_fd};
                         } else {
                             throw std::system_error(errno, std::generic_category(), "read failed");
@@ -85,14 +85,14 @@ namespace Coro {
         Task<> write(const buffer_type& buffer) {
                 size_t total = 0;
                 while (total < buffer.size()) {
-                    co_await WriteAwaiter{m_fd};
-                    ssize_t n = ::write(m_fd, buffer.data() + total, buffer.size() - total);
+                    ssize_t n = ::send(m_fd, buffer.data() + total, buffer.size() - total, 0);
                     if (n > 0) {
                         total += n;
                     } else if (n == 0) {
                         throw std::runtime_error("write returned 0 (connection closed)");
-                    } else { // n == -1
+                    } else {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            co_await WriteAwaiter{m_fd};
                             continue;
                         }
                         throw std::system_error(errno, std::generic_category(), "write failed");
@@ -109,9 +109,7 @@ namespace Coro {
                 constexpr size_t chunk=4096;
                 char tmp[chunk];
                 while (true) {
-                    co_await ReadAwaiter{m_fd};
-
-                    ssize_t n=::read(m_fd,tmp,chunk);
+                    ssize_t n=::recv(m_fd,tmp,chunk,0);
                     if(n>0){
                         buf.insert(buf.end(),tmp,tmp+n);
                     }
@@ -119,13 +117,12 @@ namespace Coro {
                         break;
                     }
                     else if (errno==EAGAIN||errno==EWOULDBLOCK) {
+                        co_await ReadAwaiter{m_fd};
                         continue;
                     }
                     else {
                          throw std::system_error(errno, std::generic_category(), "read failed");
                     }
-
-
                 }
                 co_return buf;
             }
