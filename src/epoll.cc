@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-16 20:39:34
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-17 16:45:50
+ * @LastEditTime: 2026-03-17 22:35:24
  * @FilePath: /MCoroRpc/src/epoll.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -28,10 +28,10 @@ namespace Coro{
         }
    }
 
-    void Epoll::add_reader(int fd,uint64_t wait_id){
+    bool Epoll::add_reader(int fd,uint64_t wait_id){
         auto &ev=m_event_map[fd];
         if(ev.reader!=0){
-            return;
+            m_wait_to_fd.erase(ev.reader);
         }
         int op=(ev.event.events==0)?EPOLL_CTL_ADD:EPOLL_CTL_MOD;
         ev.event.events|=EPOLLIN|EPOLLET;
@@ -41,13 +41,15 @@ namespace Coro{
         if(epoll_ctl(m_epoll_fd, op,fd, &ev.event)==-1){
             m_event_map.erase(fd);
             m_wait_to_fd.erase(wait_id);
+            return false;
         }
+        return true;
     }
 
-    void Epoll::add_writer(int fd,uint64_t wait_id){
+    bool Epoll::add_writer(int fd,uint64_t wait_id){
         auto &ev=m_event_map[fd];
         if(ev.writer!=0){
-            return;
+            m_wait_to_fd.erase(ev.writer);
         }
         int op=(ev.event.events==0)?EPOLL_CTL_ADD:EPOLL_CTL_MOD;
         ev.event.events|=EPOLLOUT|EPOLLET;
@@ -57,7 +59,9 @@ namespace Coro{
         if(epoll_ctl(m_epoll_fd, op,fd, &ev.event)==-1){
             m_event_map.erase(fd);
             m_wait_to_fd.erase(wait_id);
+            return false;
         }
+        return true;
     }
 
    void Epoll::cancel_wait(uint64_t wait_id) {

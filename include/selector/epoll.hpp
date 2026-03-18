@@ -23,9 +23,9 @@ namespace Coro{
         
         Epoll();
 
-        void add_reader(int fd,uint64_t wait_id);
+        bool add_reader(int fd,uint64_t wait_id);
 
-        void add_writer(int fd,uint64_t wait_id);
+        bool add_writer(int fd,uint64_t wait_id);
 
         void cancel_wait(uint64_t wait_fd);
         bool is_stop(){return  m_event_map.empty();}

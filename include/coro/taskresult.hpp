@@ -2,13 +2,14 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 14:38:35
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-16 14:09:18
+ * @LastEditTime: 2026-03-17 20:33:38
  * @FilePath: /MCoroRpc/include/coro/taskresult.hpp
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
 #pragma once
 #include <exception>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <variant>
 namespace Coro {
@@ -33,7 +34,7 @@ namespace Coro {
             if(auto* res=std::get_if<R>(&m_result)){
                 return  *res;
             }
-            return R{};
+            throw std::runtime_error("Task has no result");
         }
         constexpr R get_result()&&{
             if(auto *exception=std::get_if<std::exception_ptr>(&m_result)){
@@ -42,7 +43,7 @@ namespace Coro {
             if(auto* res=std::get_if<R>(&m_result)){
                 return  std::move(*res);
             }
-            return R{};
+            throw std::runtime_error("Task has no result");
         }
         void set_exception(std::exception_ptr exception){m_result=exception;}
 

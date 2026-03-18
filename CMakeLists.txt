@@ -23,3 +23,8 @@ target_link_libraries(test_task PRIVATE CoroRpc Catch2::Catch2WithMain)
 
 add_executable(test_sleep tests/test_sleep.cc)
 target_link_libraries(test_sleep PRIVATE CoroRpc Catch2::Catch2WithMain)
+
+add_executable(echo_server tests/echo_server.cc)
+target_link_libraries(echo_server PRIVATE CoroRpc)
+add_executable(echo_client tests/echo_client.cc)
+target_link_libraries(echo_client PRIVATE CoroRpc)

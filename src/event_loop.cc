@@ -155,7 +155,14 @@ namespace Coro {
         auto id=handle.id();
         m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb));
         m_coro_waits[id].insert(wait_id);
-        m_epoll.add_writer(fd,wait_id);
+        if(!m_epoll.add_writer(fd,wait_id)){
+            m_wait_callback.erase(wait_id);
+            m_coro_waits[id].erase(wait_id);
+            if(m_coro_waits[id].empty()){
+                m_coro_waits.erase(id);
+            }
+            return 0;
+        }
         return wait_id;
     }
         
@@ -164,7 +171,14 @@ namespace Coro {
         auto id=handle.id();
         m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb));
         m_coro_waits[id].insert(wait_id);
-        m_epoll.add_reader(fd, wait_id);
+        if(!m_epoll.add_reader(fd, wait_id)){
+            m_wait_callback.erase(wait_id);
+            m_coro_waits[id].erase(wait_id);
+            if(m_coro_waits[id].empty()){
+                m_coro_waits.erase(id);
+            }
+            return 0;
+        }
         return wait_id;
     }
 }
