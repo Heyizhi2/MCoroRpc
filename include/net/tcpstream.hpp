@@ -17,118 +17,50 @@
 #include <sys/socket.h>
 #include "../coro/task.hpp"
 #include "ioawaiter.hpp"
+#include "tcp/tcp_buffer.h"
 namespace Coro {
     namespace net {
         class TcpStream:public Noncopyable{
             public:
             using buffer_type=std::vector<char>;
 
-            explicit TcpStream(int fd)
-            :m_fd(fd){
-                if(m_fd>=0){
-                    socklen_t len=sizeof(m_local_addr);
-                    ::getsockname(fd,reinterpret_cast<sockaddr*>(&m_local_addr),&len);
-                }
-            }
+            explicit TcpStream(int fd, int64_t bufferSize = 65536);
 
             TcpStream(const TcpStream&)=delete;
             TcpStream& operator=(const TcpStream&)=delete;
 
-            TcpStream(TcpStream && other) noexcept
-            :m_fd(std::exchange(other.m_fd,-1)),m_local_addr(other.m_local_addr){}
+            TcpStream(TcpStream && other) noexcept;
 
-            TcpStream& operator=(TcpStream&& other) noexcept{
-                if(this!=&other){
-                    close();
-                    m_fd=std::exchange(other.m_fd,-1);
-                    m_local_addr=other.m_local_addr;
-                }
-                return *this;
-            }
+            TcpStream& operator=(TcpStream&& other) noexcept;
 
 
-            void close(){
-                if(m_fd>=0){
-                    ::close(m_fd);
-                    m_fd=-1;
-                }
-            }
+            void close();
 
             int fd()const{return  m_fd;}
 
             const sockaddr_storage& local_addr()const{return m_local_addr;}
 
-            
-           Task<buffer_type> read(ssize_t size = -1) {
-                    if (size < 0) {
-                        co_return co_await read_until_eof();
-                    }
-                    buffer_type buf(size);
-                    size_t total = 0;
-                    while (total < buf.size()) {
-                        ssize_t n = ::recv(m_fd, buf.data() + total, size - total, 0);
-                        if (n > 0) {
-                            total += n;
-                        } else if (n == 0) {
-                            break;
-                        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            if (total > 0) break;
-                            co_await ReadAwaiter{m_fd};
-                        } else {
-                            throw std::system_error(errno, std::generic_category(), "read failed");
-                        }
-                    }
-                    buf.resize(total);
-                    co_return buf;
-        }
+            TcpBuffer::s_ptr getReadBuffer() const { return m_read_buffer; }
+            TcpBuffer::s_ptr getWriteBuffer() const { return m_write_buffer; }
 
-        Task<> write(const buffer_type& buffer) {
-                size_t total = 0;
-                while (total < buffer.size()) {
-                    ssize_t n = ::send(m_fd, buffer.data() + total, buffer.size() - total, 0);
-                    if (n > 0) {
-                        total += n;
-                    } else if (n == 0) {
-                        throw std::runtime_error("write returned 0 (connection closed)");
-                    } else {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            co_await WriteAwaiter{m_fd};
-                            continue;
-                        }
-                        throw std::system_error(errno, std::generic_category(), "write failed");
-                    }
-                }
-                co_return;
-            }
-            ~TcpStream(){close();}
+           Task<buffer_type> read(ssize_t size = -1);
+
+           Task<ssize_t> readToBuffer();
+
+           Task<> write(const buffer_type& buffer);
+
+           Task<> writeFromBuffer();
+
+           ~TcpStream(){close();}
 
 
             private:
-            Task<buffer_type> read_until_eof(){
-                buffer_type buf;
-                constexpr size_t chunk=4096;
-                char tmp[chunk];
-                while (true) {
-                    ssize_t n=::recv(m_fd,tmp,chunk,0);
-                    if(n>0){
-                        buf.insert(buf.end(),tmp,tmp+n);
-                    }
-                    else if (n==0) {
-                        break;
-                    }
-                    else if (errno==EAGAIN||errno==EWOULDBLOCK) {
-                        co_await ReadAwaiter{m_fd};
-                        continue;
-                    }
-                    else {
-                         throw std::system_error(errno, std::generic_category(), "read failed");
-                    }
-                }
-                co_return buf;
-            }
+            Task<buffer_type> read_until_eof();
             private:
             int m_fd{-1};
             sockaddr_storage m_local_addr{};
+            TcpBuffer::s_ptr m_read_buffer;
+            TcpBuffer::s_ptr m_write_buffer;
         };
     }
 }

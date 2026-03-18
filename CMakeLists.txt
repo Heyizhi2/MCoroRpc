@@ -14,12 +14,19 @@ set(SOURCES
     src/handle.cc
     src/timer.cc
     src/epoll.cc
+    src/tcp_buffer.cc
+    src/tcpstream.cc
+    src/tinypb_protocol.cc
+    src/tinypb_coder.cc
 )
 
 add_library(CoroRpc STATIC ${SOURCES})
 
 add_executable(test_task tests/test_task.cc)
 target_link_libraries(test_task PRIVATE CoroRpc Catch2::Catch2WithMain)
+
+add_executable(test_tinypb_coder tests/test_tinypb_coder.cc)
+target_link_libraries(test_tinypb_coder PRIVATE CoroRpc Catch2::Catch2WithMain)
 
 add_executable(test_sleep tests/test_sleep.cc)
 target_link_libraries(test_sleep PRIVATE CoroRpc Catch2::Catch2WithMain)
