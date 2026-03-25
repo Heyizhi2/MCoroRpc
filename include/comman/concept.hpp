@@ -70,6 +70,9 @@ namespace Coro {
          */
         template<typename T>
         using AwaiterType = typename GetAwaiter<T>::type;
+
+
+      
         
     }
 
@@ -91,6 +94,16 @@ namespace Coro {
             { a.await_ready() } -> std::convertible_to<bool>;
             a.await_suspend(h);  // 只要求合法，不检查返回类型（若需精确，可进一步细分）
             a.await_resume();
+        };
+
+
+           template<typename T>
+            concept SchedulableTask = requires(T t) {
+            t.valid();
+            t.done();
+            t.schedule();
+            t.cancel();
+            { t.operator co_await() };
         };
     }
 

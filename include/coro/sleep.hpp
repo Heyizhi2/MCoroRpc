@@ -55,7 +55,7 @@ namespace Coro {
         void await_suspend(std::coroutine_handle<> h){
             auto when=types::Clock::now()+duration;
             m_timer=std::make_shared<Timer>(when,[h](){h.resume();});
-            m_timer->run();
+            m_timer->start();
         }
 
         /**

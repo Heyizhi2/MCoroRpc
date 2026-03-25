@@ -327,8 +327,9 @@ namespace Coro {
          * @brief 取消Task
          */
         void cancel() {
-            if (m_handle) {
+            if (m_handle && !m_handle.done()) {
                 m_handle.promise().set_cancelled(true);
+                get_event_loop().cancel(m_handle.promise().id());
                 destroy();
             }
         }

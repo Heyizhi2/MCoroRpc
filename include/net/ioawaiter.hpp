@@ -45,7 +45,7 @@ namespace Coro {
             template<typename Promise>
             void await_suspend(std::coroutine_handle<Promise> handle)noexcept{
                 auto& promise=handle.promise();
-                m_wait_id=get_event_loop().add_reader(fd,promise,[handle](){handle.resume();});
+                m_wait_id=get_event_loop().add_reader(fd,promise,[handle](){handle.resume();}, handle);
             }
 
             /**
@@ -89,7 +89,7 @@ namespace Coro {
             template<typename Promise>
             void await_suspend(std::coroutine_handle<Promise> handle){
                 auto& promise=handle.promise();
-                m_wait_id=get_event_loop().add_writer(fd,promise,[handle](){handle.resume();});
+                m_wait_id=get_event_loop().add_writer(fd,promise,[handle](){handle.resume();}, handle);
             }
 
 

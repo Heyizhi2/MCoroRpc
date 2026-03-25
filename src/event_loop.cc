@@ -12,11 +12,12 @@
 #include <cstdint>
 #include <optional>
 #include <sys/epoll.h>
+#include <coroutine>
 namespace Coro {
-    uint64_t Eventloop::call_soon(Handle& handle,Callback callback){
+    uint64_t Eventloop::call_soon(Handle& handle,Callback callback, std::coroutine_handle<> coro){
         auto wait_id=next_wait_id++;
         auto id=handle.id();
-        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(callback));
+        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(callback), coro);
         m_coro_waits[id].insert(wait_id);
         m_ready_queue.push(wait_id);
         return wait_id;
@@ -53,10 +54,10 @@ namespace Coro {
         execute_ready_callback();
     }
 
-    uint64_t Eventloop::call_at(types::TimePoint when,Handle&handle,Callback cb){
+    uint64_t Eventloop::call_at(types::TimePoint when,Handle&handle,Callback cb, std::coroutine_handle<> coro){
         auto wait_id=next_wait_id++;
         auto id=handle.id();
-        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb));
+        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb), coro);
         m_coro_waits[id].insert(wait_id);
         m_scheduled.emplace_back(wait_id,when);
         std::push_heap(m_scheduled.begin(),m_scheduled.end(),[](auto& a,auto& b){
@@ -97,15 +98,15 @@ namespace Coro {
             m_ready_queue.pop();
             auto it=m_wait_callback.find(wait_id);
             if(it!=m_wait_callback.end()){
-                auto cb=std::move(it->second);
+                auto cb=std::move(it->second.callback);
                 m_wait_callback.erase(it);
                 if(cb) cb();
             }
         }
     }
 
-    Eventloop::Callback Eventloop::make_warped_callback(uint64_t wait_id,Handle::ID coro_id,Callback cb){
-        return [this,coro_id,wait_id,user_cb=std::move(cb)](){
+    Eventloop::WaitCallback Eventloop::make_warped_callback(uint64_t wait_id,Handle::ID coro_id,Callback cb, std::coroutine_handle<> coro){
+        auto wrapped = [this,coro_id,wait_id,user_cb=std::move(cb)](){
             user_cb();
             auto it=m_coro_waits.find(coro_id);
             if(it!=m_coro_waits.end()){
@@ -115,6 +116,7 @@ namespace Coro {
                 }
             }
         };
+        return WaitCallback{std::move(wrapped), coro};
     }
 
     void Eventloop::cancel(Handle::ID cancelled_id){
@@ -127,22 +129,27 @@ namespace Coro {
     }
 
     std::optional<Eventloop::Callback> Eventloop::cancel_wait(uint64_t wait_id){
-        m_wait_callback.erase(wait_id);
-        auto it=std::find_if(m_scheduled.begin(),m_scheduled.end(),[wait_id](auto&p){
+        auto it=m_wait_callback.find(wait_id);
+        std::optional<Callback> res;
+        
+        if(it!=m_wait_callback.end()){
+            res=std::move(it->second.callback);
+            auto coro = it->second.coro_handle;
+            m_wait_callback.erase(it);
+            if(coro && !coro.done()){
+                coro.destroy();
+            }
+        }
+        
+        auto scheduled_it=std::find_if(m_scheduled.begin(),m_scheduled.end(),[wait_id](auto&p){
             return p.first==wait_id;
         });
 
-        auto cb_it=m_wait_callback.find(wait_id);
-        std::optional<Callback> res;
-        if(cb_it!=m_wait_callback.end()){
-            res=std::move(cb_it->second);
-            m_wait_callback.erase(cb_it);
-        }
         //从 epoll 中移除
         m_epoll.cancel_wait(wait_id);
 
-        if(it!=m_scheduled.end()){
-            m_scheduled.erase(it);
+        if(scheduled_it!=m_scheduled.end()){
+            m_scheduled.erase(scheduled_it);
             std::make_heap(m_scheduled.begin(),m_scheduled.end(),[](auto& a,auto& b){
             return a.second>b.second;});
         }
@@ -150,10 +157,10 @@ namespace Coro {
         return res;
     }
 
-    uint64_t Eventloop::add_writer(int fd,Handle& handle,Callback cb){
+    uint64_t Eventloop::add_writer(int fd,Handle& handle,Callback cb, std::coroutine_handle<> coro){
         auto wait_id=next_wait_id++;
         auto id=handle.id();
-        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb));
+        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb), coro);
         m_coro_waits[id].insert(wait_id);
         if(!m_epoll.add_writer(fd,wait_id)){
             m_wait_callback.erase(wait_id);
@@ -166,10 +173,10 @@ namespace Coro {
         return wait_id;
     }
         
-    uint64_t Eventloop::add_reader(int fd,Handle& handle,Callback cb){
+    uint64_t Eventloop::add_reader(int fd,Handle& handle,Callback cb, std::coroutine_handle<> coro){
         auto wait_id=next_wait_id++;
         auto id=handle.id();
-        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb));
+        m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(cb), coro);
         m_coro_waits[id].insert(wait_id);
         if(!m_epoll.add_reader(fd, wait_id)){
             m_wait_callback.erase(wait_id);

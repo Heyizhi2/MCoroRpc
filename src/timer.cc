@@ -29,9 +29,7 @@ namespace Coro {
           if (m_cancelled) return;
           m_cancelled = true;
           if (m_wait_id) {
-              if (auto cb = get_event_loop().cancel_wait(m_wait_id)) {
-                  (*cb)();  // 立即唤醒
-              }
+              get_event_loop().cancel_wait(m_wait_id);
           }
       }
 

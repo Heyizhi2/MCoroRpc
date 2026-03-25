@@ -47,11 +47,12 @@ namespace Coro {
          * @brief 立即执行回调
          * @param handle 关联的协程句柄
          * @param cb 回调函数
+         * @param coro 协程句柄
          * @return 等待ID，用于取消
          * 
          * 将回调加入下一轮事件循环执行
          */
-        uint64_t call_soon(Handle& handle,Callback cb);
+        uint64_t call_soon(Handle& handle,Callback cb, std::coroutine_handle<> coro = nullptr);
 
 
         /**
@@ -61,12 +62,13 @@ namespace Coro {
          * @param delay 延迟时间
          * @param handle 关联的协程句柄
          * @param cb 回调函数
+         * @param coro 协程句柄
          * @return 等待ID，用于取消
          */
         template<typename Rep,typename Period>
-        uint64_t call_later(std::chrono::duration<Rep,Period>delay,Handle&handle,Callback cb){
+        uint64_t call_later(std::chrono::duration<Rep,Period>delay,Handle&handle,Callback cb, std::coroutine_handle<> coro = nullptr){
             auto when=types::Clock::now()+std::chrono::duration_cast<std::chrono::milliseconds>(delay);
-            return call_at(when,handle,std::move(cb));
+            return call_at(when,handle,std::move(cb), coro);
         }
         
         /**
@@ -74,9 +76,10 @@ namespace Coro {
          * @param when 执行时间点
          * @param handle 关联的协程句柄
          * @param cb 回调函数
+         * @param coro 协程句柄
          * @return 等待ID，用于取消
          */
-        uint64_t call_at(types::TimePoint,Handle&handle,Callback cb);
+        uint64_t call_at(types::TimePoint,Handle&handle,Callback cb, std::coroutine_handle<> coro = nullptr);
 
         /**
          * @brief 取消协程的所有等待操作
@@ -102,18 +105,20 @@ namespace Coro {
          * @param fd 文件描述符
          * @param handle 关联的协程句柄
          * @param cb 回调函数
+         * @param coro 协程句柄
          * @return 等待ID，用于取消
          */
-        uint64_t add_writer(int fd,Handle& handle,Callback cb);
+        uint64_t add_writer(int fd,Handle& handle,Callback cb, std::coroutine_handle<> coro = nullptr);
 
         /**
          * @brief 注册读事件监听
          * @param fd 文件描述符
          * @param handle 关联的协程句柄
          * @param cb 回调函数
+         * @param coro 协程句柄
          * @return 等待ID，用于取消
          */
-        uint64_t add_reader(int fd,Handle& handle,Callback cb);
+        uint64_t add_reader(int fd,Handle& handle,Callback cb, std::coroutine_handle<> coro = nullptr);
         
         private:
         /**
@@ -136,21 +141,27 @@ namespace Coro {
          */
         void process_epoll_event(int timeout);
 
-        /**
-         * @brief 处理超时的定时器
-         */
+         /**
+          * @brief 处理超时的定时器
+          */
         void process_expired_timeout();
 
-        /**
-         * @brief 执行就绪队列中的回调
-         */
+         /**
+          * @brief 执行就绪队列中的回调
+          */
         void execute_ready_callback();
+
+        /** @brief 等待信息结构体 */
+        struct WaitCallback {
+            Callback callback;
+            std::coroutine_handle<> coro_handle;
+        };
 
         /**
          * @brief 创建包装回调
          * @details 在回调执行后清理协程等待记录
          */
-        Callback make_warped_callback(uint64_t,Handle::ID,Callback cb);
+        WaitCallback make_warped_callback(uint64_t,Handle::ID,Callback cb, std::coroutine_handle<> coro);
 
         private:
         /** @brief 下一个等待ID */
@@ -163,7 +174,7 @@ namespace Coro {
         std::unordered_map<Handle::ID,std::unordered_set<uint64_t>> m_coro_waits;
         
         /** @brief 等待ID到回调函数的映射 */
-        std::unordered_map<uint64_t,Callback> m_wait_callback;
+        std::unordered_map<uint64_t, WaitCallback> m_wait_callback;
 
         /** @brief 定时器堆，按时间排序的等待任务 */
         std::vector<std::pair<uint64_t, types::TimePoint>> m_scheduled;

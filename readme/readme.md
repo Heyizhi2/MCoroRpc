@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-18 21:32:20
+ * @LastEditTime: 2026-03-25 15:45:34
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -388,3 +388,56 @@ All tests passed (4 assertions in 3 test cases)
 Benchmark: ~1.7-1.9M ops/s
 后续可增强
 如需更强的取消传播，可以在 Task 中添加 Channel<bool> 取消信号，子协程 co_await 该 Channel 以响应取消。但需要解决循环依赖问题。
+
+
+这个项目是一个 C++20 协程 RPC 框架，展示工作量可从以下方面入手：
+
+一、技术亮点（核心工作量）
+模块	技术点	可展示方式
+协程调度	手写 Task/Promise，状态机管理	流程图、状态转换图
+IO模型	Epoll 边缘触发 + 协程挂起	与阻塞IO对比性能数据
+Channel	MPMC 无锁队列，阻塞/非阻塞	基准测试图表
+RPC协议	TinyPB 二进制序列化	协议格式图、编解码流程
+网络层	异步connect/accept/read/write	时序图
+二、可视化展示
+1. 架构图
+   ┌─────────────────────────────────────┐
+   │           Application               │
+   ├─────────────────────────────────────┤
+   │  Task │ Channel │ TcpStream │ Coder │
+   ├─────────────────────────────────────┤
+   │         Event Loop (Epoll)          │
+   ├─────────────────────────────────────┤
+   │           OS (Linux)                │
+   └─────────────────────────────────────┘
+
+2. 协程调度流程图
+   创建 → 挂起(co_await) → 事件触发 → 恢复 → 完成
+
+3. 性能对比图
+   - 吞吐量：协程 vs 线程池
+   - 内存占用：1:N 模型优势
+   - 延迟：与阻塞模型对比
+三、毕业设计论文结构建议
+第3章 系统设计
+
+绘制完整架构图
+详细介绍各模块职责
+第4章 关键技术实现
+
+4.1 协程调度机制（Task/Promise源码分析）
+4.2 异步IO模型（Epoll+协程）
+4.3 Channel实现（MPMC队列）
+4.4 RPC协议设计
+第5章 测试与分析
+
+功能测试用例
+性能基准测试（与现有方案对比）
+四、代码量统计
+# 统计头文件和源文件行数
+wc -l include/**/*.hpp src/*.cc
+你的项目约 2500+ 行代码，可重点展示：
+
+纯手写协程调度（非依赖现成库）
+完整网络IO封装
+Channel 并发原语
