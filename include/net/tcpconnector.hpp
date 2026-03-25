@@ -1,11 +1,17 @@
-/*
- * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @Date: 2026-03-17 19:30:02
- * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-17 19:59:18
- * @FilePath: /MCoroRpc/include/net/tcpconnector.hpp
- * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+/**
+ * @file tcpconnector.hpp
+ * @brief TCP 连接器
+ * 
+ * 提供异步TCP连接功能。
+ * - connect(): 异步连接到指定主机和端口
+ * - 返回TcpStream用于后续IO操作
+ * 
+ * 使用示例：
+ * @code
+ * auto stream = co_await connect("127.0.0.1", 8080);
+ * @endcode
  */
+
 #pragma once
 
 #include <sys/socket.h>
@@ -21,7 +27,19 @@ namespace Coro {
 namespace net {
 
 namespace detail {
-    // 异步非阻塞连接操作
+    /**
+     * @brief 执行异步非阻塞连接
+     * @param fd socket文件描述符
+     * @param addr 服务器地址
+     * @param len 地址长度
+     * @return Task<bool> 连接是否成功
+     * 
+     * 使用流程：
+     * 1. 首先尝试connect()，如果立即成功则返回true
+     * 2. 如果返回EINPROGRESS，说明连接正在进行
+     * 3. 等待socket变为可写（连接完成或失败）
+     * 4. 通过getsockopt检查连接结果
+     */
     inline Task<bool> do_connect(int fd, const sockaddr* addr, socklen_t len) {
         int ret = ::connect(fd, addr, len);
         if (ret == 0) {
@@ -43,11 +61,20 @@ namespace detail {
     }
 } // namespace detail
 
-// 异步连接到指定地址和端口
+/**
+ * @brief 异步连接到服务器
+ * @param host 服务器主机名或IP地址
+ * @param port 服务器端口
+ * @return Task<TcpStream> 成功后返回TCP流
+ * 
+ * 使用getaddrinfo解析地址，支持IPv4和IPv6。
+ * 尝试所有解析出的地址，直到连接成功。
+ * 设置socket为非阻塞模式(SOCK_NONBLOCK)和-close-on-exec(SOCK_CLOEXEC)。
+ */
 inline Task<TcpStream> connect(std::string_view host, std::uint16_t port) {
     addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_family = AF_UNSPEC;    // 支持IPv4和IPv6
+    hints.ai_socktype = SOCK_STREAM; // TCP流
 
     addrinfo* result = nullptr;
     std::string port_str = std::to_string(port);

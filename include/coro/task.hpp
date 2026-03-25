@@ -1,11 +1,23 @@
-/*
- * @Author: 来自火星的码农 15122322+heyizhi@user.noreply.gitee.com
- * @Date: 2026-03-15 10:48:12
- * @LastEditors: 来自火星的码农 15122322+heyizhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-18 20:55:00
- * @FilePath: /MCoroRpc/include/coro/task.hpp
- * @Description: Task 实现
+/**
+ * @file task.hpp
+ * @brief Task 协程实现
+ * 
+ * 提供协程的Promise和Task类型实现。
+ * - Task: 协程的返回类型，类似于std::future
+ * - Promise: 协程的Promise类型，管理协程状态和结果
+ * - TaskGroup: 任务组，管理多个协程
+ * 
+ * 使用示例：
+ * @code
+ * Task<int> myCoroutine() {
+ *     co_return 42;
+ * }
+ * 
+ * auto task = myCoroutine();
+ * int result = co_await task;
+ * @endcode
  */
+
 #pragma once
 #include "event_loop.hpp"
 #include "handle.hpp"
@@ -19,218 +31,375 @@
 #include "../comman/exception.hpp"
 
 namespace Coro {
+    /**
+     * @brief 任务取消异常
+     * @details 当任务被取消时，如果尝试获取结果会抛出此异常
+     */
+    struct TaskCancelledException : std::exception {
+        const char* what() const noexcept override {
+            return "Task was cancelled.";
+        }
+    };
 
-struct TaskCancelledException : std::exception {
-    const char* what() const noexcept override {
-        return "Task was cancelled.";
-    }
-};
-
-struct NoAwaitatInitalSuspend{};
-inline NoAwaitatInitalSuspend no_wait_at_initial_suspend;
-
-template<typename R>
-struct Task;
-
-template<typename ResultType>
-struct Promise : public CoroHandle, public TaskResult<ResultType> {
-    Promise() = default;
+    /**
+     * @brief 标记不使用初始挂起
+     * @details 传递给Promise以立即开始执行协程（不挂起在co_await处）
+     */
+    struct NoAwaitatInitalSuspend{};
     
-    template<typename... Args>
-    Promise(NoAwaitatInitalSuspend, Args&&...) : m_wait_at_initial_suspend(false) {}
-    
-    struct InitialAwaiter {
-        constexpr bool await_ready() const noexcept { return !m_wait_at_initial_suspend; }
-        template<typename P>
-        void await_suspend(std::coroutine_handle<P>) const noexcept {}
-        constexpr void await_resume() const noexcept {}
+    /** @brief 默认不使用初始挂起的标记 */
+    inline NoAwaitatInitalSuspend no_wait_at_initial_suspend;
+
+    /**
+     * @brief Task声明
+     * @tparam R 协程返回值类型
+     */
+    template<typename R>
+    struct Task;
+
+    /**
+     * @brief Promise实现
+     * @tparam ResultType 协程返回值类型
+     * 
+     * 继承自CoroHandle以支持调度，继承TaskResult以存储结果
+     */
+    template<typename ResultType>
+    struct Promise : public CoroHandle, public TaskResult<ResultType> {
+        Promise() = default;
+        
+        /**
+         * @brief 构造函数
+         * @tparam Args 构造参数
+         * @param 标记，是否等待初始挂起
+         */
+        template<typename... Args>
+        Promise(NoAwaitatInitalSuspend, Args&&...) : m_wait_at_initial_suspend(false) {}
+        
+        /**
+         * @brief 初始挂起等待器
+         * @details 协程开始时的挂起点，控制是否立即执行
+         */
+        struct InitialAwaiter {
+            constexpr bool await_ready() const noexcept { return !m_wait_at_initial_suspend; }
+            template<typename P>
+            void await_suspend(std::coroutine_handle<P>) const noexcept {}
+            constexpr void await_resume() const noexcept {}
+            const bool m_wait_at_initial_suspend{ true };
+        };
+
+        /**
+         * @brief 最终挂起等待器
+         * @details 协程结束时的挂起点，用于恢复父协程
+         */
+        struct FinalAwaiter {
+            bool await_ready() const noexcept { 
+                return false; 
+            }
+            
+            template<typename P>
+            void await_suspend(std::coroutine_handle<P> handle) noexcept {
+                auto parent = handle.promise().parent();
+                if (parent) {
+                    parent->set_state(Handle::State::SCHEDULE);
+                    get_event_loop().call_soon(*parent, [parent]() { parent->run(); });
+                }
+            }
+            
+            constexpr void await_resume() const noexcept {}
+        };
+
+        /**
+         * @brief 初始挂起点
+         * @return InitialAwaiter
+         */
+        auto initial_suspend() noexcept {
+            return InitialAwaiter{ m_wait_at_initial_suspend };
+        }
+
+        /**
+         * @brief 最终挂起点
+         * @return FinalAwaiter
+         */
+        auto final_suspend() noexcept {
+            return FinalAwaiter{};
+        }
+
+        /**
+         * @brief 获取协程的Task对象
+         * @return Task<R> 协程的返回对象
+         */
+        Task<ResultType> get_return_object() {
+            return Task<ResultType>{ std::coroutine_handle<Promise<ResultType>>::from_promise(*this) };
+        }
+
+        /**
+         * @brief 执行协程
+         */
+        void run() final {
+            std::coroutine_handle<Promise<ResultType>>::from_promise(*this).resume();
+        }
+
+        /**
+         * @brief 获取协程位置
+         */
+        const std::source_location& get_loc() const override {
+            return m_loc;
+        }
+
+        /**
+         * @brief 打印调用栈
+         */
+        void traceback(int depth) final override {
+            utils::print_location(m_loc, depth);
+            if (m_parent) {
+                m_parent->traceback(depth + 1);
+            }
+        }
+
+        /**
+         * @brief await_transform
+         * @details 用于拦截co_await，获取位置信息
+         */
+        template<concepts::Awaiter _Awaiter>
+        decltype(auto) await_transform(_Awaiter&& awaiter, std::source_location loc = std::source_location::current()) {
+            m_loc = loc;
+            return std::forward<_Awaiter>(awaiter);
+        }
+
+        /**
+         * @brief 设置父协程
+         */
+        void set_parent(CoroHandle* p) { m_parent = p; }
+        
+        /**
+         * @brief 获取父协程
+         */
+        CoroHandle* parent() const { return m_parent; }
+        
+        /**
+         * @brief 设置取消状态
+         */
+        void set_cancelled(bool v) { m_cancelled = v; }
+        
+        /**
+         * @brief 获取取消状态
+         */
+        bool cancelled() const { return m_cancelled; }
+
+    private:
+        /** @brief 是否等待初始挂起 */
         const bool m_wait_at_initial_suspend{ true };
+        
+        /** @brief 父协程指针 */
+        CoroHandle* m_parent{ nullptr };
+        
+        /** @brief 协程创建位置 */
+        std::source_location m_loc{};
+        
+        /** @brief 是否已取消 */
+        bool m_cancelled{ false };
     };
 
-    struct FinalAwaiter {
-        bool await_ready() const noexcept { 
-            return false; 
-        }
+    /**
+     * @brief Task类模板
+     * @tparam ResultType 协程返回值类型
+     * 
+     * Task是协程的返回类型，类似于std::future。
+     * 可以co_await获取结果，或调用get_result()同步获取。
+     */
+    template<typename ResultType = void>
+    class Task {
+    public:
+        /** @brief Promise类型 */
+        using promise_type = Promise<ResultType>;
         
-        template<typename P>
-        void await_suspend(std::coroutine_handle<P> handle) noexcept {
-            auto parent = handle.promise().parent();
-            if (parent) {
-                parent->set_state(Handle::State::SCHEDULE);
-                get_event_loop().call_soon(*parent, [parent]() { parent->run(); });
-            }
-        }
+        /** @brief 协程句柄类型 */
+        using coro_handle = std::coroutine_handle<promise_type>;
         
-        constexpr void await_resume() const noexcept {}
-    };
-
-    auto initial_suspend() noexcept {
-        return InitialAwaiter{ m_wait_at_initial_suspend };
-    }
-
-    auto final_suspend() noexcept {
-        return FinalAwaiter{};
-    }
-
-    Task<ResultType> get_return_object() {
-        return Task<ResultType>{ std::coroutine_handle<Promise<ResultType>>::from_promise(*this) };
-    }
-
-    void run() final {
-        std::coroutine_handle<Promise<ResultType>>::from_promise(*this).resume();
-    }
-
-    const std::source_location& get_loc() const override {
-        return m_loc;
-    }
-
-    void traceback(int depth) final override {
-        utils::print_location(m_loc, depth);
-        if (m_parent) {
-            m_parent->traceback(depth + 1);
-        }
-    }
-
-    template<concepts::Awaiter _Awaiter>
-    decltype(auto) await_transform(_Awaiter&& awaiter, std::source_location loc = std::source_location::current()) {
-        m_loc = loc;
-        return std::forward<_Awaiter>(awaiter);
-    }
-
-    void set_parent(CoroHandle* p) { m_parent = p; }
-    CoroHandle* parent() const { return m_parent; }
-    
-    void set_cancelled(bool v) { m_cancelled = v; }
-    bool cancelled() const { return m_cancelled; }
-
-private:
-    const bool m_wait_at_initial_suspend{ true };
-    CoroHandle* m_parent{ nullptr };
-    std::source_location m_loc{};
-    bool m_cancelled{ false };
-};
-
-template<typename ResultType = void>
-class Task {
-public:
-    using promise_type = Promise<ResultType>;
-    using coro_handle = std::coroutine_handle<promise_type>;
-    
-    struct AwaiterBase {
-        constexpr bool await_ready() const noexcept {
-            if (self_handle) [[likely]] {
-                return self_handle.done();
-            }
-            return true;
-        }
-
-        template<typename _promise>
-        void await_suspend(std::coroutine_handle<_promise> parent) const noexcept {
-            assert(!self_handle.promise().parent());
-            parent.promise().set_state(Handle::State::SUSPEND);
-            self_handle.promise().set_parent(&parent.promise());
-            self_handle.promise().schedule();
-        }
-        
-        coro_handle self_handle{};
-    };
-
-public:
-    explicit Task(coro_handle h) noexcept : m_handle(h) {}
-    
-    Task(Task&& t) noexcept : m_handle(std::exchange(t.m_handle, {})) {}
-    
-    ~Task() = default;
-
-    decltype(auto) get_result() & {
-        return m_handle.promise().get_result();
-    }
-
-    decltype(auto) get_result() && {
-        return std::move(m_handle.promise()).get_result();
-    }
-
-    auto operator co_await() const & noexcept {
-        struct Awaiter : public AwaiterBase {
-            decltype(auto) await_resume() {
-                if (!AwaiterBase::self_handle) [[unlikely]] {
-                    throw ExceptionInvalidFuture();
+        /**
+         * @brief Task的Awaiter基类
+         */
+        struct AwaiterBase {
+            /**
+             * @brief 检查协程是否完成
+             */
+            constexpr bool await_ready() const noexcept {
+                if (self_handle) [[likely]] {
+                    return self_handle.done();
                 }
-                return AwaiterBase::self_handle.promise().get_result();
+                return true;
             }
-        };
-        return Awaiter{ m_handle };
-    }
 
-    auto operator co_await() const && noexcept {
-        struct Awaiter : public AwaiterBase {
-            decltype(auto) await_resume() {
-                if (!AwaiterBase::self_handle) [[unlikely]] {
-                    throw ExceptionInvalidFuture();
+            /**
+             * @brief 挂起当前协程，恢复Task协程
+             */
+            template<typename _promise>
+            void await_suspend(std::coroutine_handle<_promise> parent) const noexcept {
+                assert(!self_handle.promise().parent());
+                parent.promise().set_state(Handle::State::SUSPEND);
+                self_handle.promise().set_parent(&parent.promise());
+                self_handle.promise().schedule();
+            }
+            
+            /** @brief Task协程句柄 */
+            coro_handle self_handle{};
+        };
+
+    public:
+        /**
+         * @brief 构造函数
+         * @param h 协程句柄
+         */
+        explicit Task(coro_handle h) noexcept : m_handle(h) {}
+        
+        /**
+         * @brief 移动构造函数
+         */
+        Task(Task&& t) noexcept : m_handle(std::exchange(t.m_handle, {})) {}
+        
+        ~Task() = default;
+
+        /**
+         * @brief 获取结果（左值版本）
+         */
+        decltype(auto) get_result() & {
+            return m_handle.promise().get_result();
+        }
+
+        /**
+         * @brief 获取结果（右值版本）
+         */
+        decltype(auto) get_result() && {
+            return std::move(m_handle.promise()).get_result();
+        }
+
+        /**
+         * @brief co_await运算符（左值）
+         */
+        auto operator co_await() const & noexcept {
+            struct Awaiter : public AwaiterBase {
+                decltype(auto) await_resume() {
+                    if (!AwaiterBase::self_handle) [[unlikely]] {
+                        throw ExceptionInvalidFuture();
+                    }
+                    return AwaiterBase::self_handle.promise().get_result();
                 }
-                return std::move(AwaiterBase::self_handle.promise()).get_result();
+            };
+            return Awaiter{ m_handle };
+        }
+
+        /**
+         * @brief co_await运算符（右值）
+         */
+        auto operator co_await() const && noexcept {
+            struct Awaiter : public AwaiterBase {
+                decltype(auto) await_resume() {
+                    if (!AwaiterBase::self_handle) [[unlikely]] {
+                        throw ExceptionInvalidFuture();
+                    }
+                    return std::move(AwaiterBase::self_handle.promise()).get_result();
+                }
+            };
+            return Awaiter{ m_handle };
+        }
+
+        /**
+         * @brief 检查Task是否有效
+         */
+        bool valid() const { return m_handle != nullptr; }
+        
+        /**
+         * @brief 检查协程是否完成
+         */
+        bool done() const { return m_handle == nullptr || m_handle.done(); }
+        
+        /**
+         * @brief 检查是否已取消
+         */
+        bool cancelled() const { 
+            if (m_handle) {
+                return m_handle.promise().cancelled();
             }
-        };
-        return Awaiter{ m_handle };
-    }
-
-    bool valid() const { return m_handle != nullptr; }
-    bool done() const { return m_handle == nullptr || m_handle.done(); }
-    bool cancelled() const { 
-        if (m_handle) {
-            return m_handle.promise().cancelled();
+            return false;
         }
-        return false;
-    }
-    
-    void cancel() {
-        if (m_handle) {
-            m_handle.promise().set_cancelled(true);
-            destroy();
+        
+        /**
+         * @brief 取消Task
+         */
+        void cancel() {
+            if (m_handle) {
+                m_handle.promise().set_cancelled(true);
+                destroy();
+            }
         }
-    }
-    
-    void schedule() {
-        if (m_handle) {
-            m_handle.promise().schedule();
+        
+        /**
+         * @brief 调度Task执行
+         */
+        void schedule() {
+            if (m_handle) {
+                m_handle.promise().schedule();
+            }
         }
-    }
 
-private:
-    void destroy() {
-        if (auto handle = std::exchange(m_handle, nullptr)) {
-            handle.destroy();
+    private:
+        /**
+         * @brief 销毁协程句柄
+         */
+        void destroy() {
+            if (auto handle = std::exchange(m_handle, nullptr)) {
+                handle.destroy();
+            }
         }
-    }
 
-private:
-    coro_handle m_handle;
-};
+    private:
+        /** @brief 协程句柄 */
+        coro_handle m_handle;
+    };
 
-template<typename ResultType = void>
-class TaskGroup {
-public:
-    TaskGroup() = default;
-    
-    template<typename F>
-    Task<ResultType> spawn(F&& func) {
-        auto task = func();
-        m_tasks.push_back(std::move(task));
-        return task;
-    }
-    
-    void cancel() {
-        for (auto& task : m_tasks) {
-            task.cancel();
+    /**
+     * @brief 任务组
+     * @tparam ResultType 任务返回值类型
+     * 
+     * 用于管理多个协程任务，提供批量操作能力
+     */
+    template<typename ResultType = void>
+    class TaskGroup {
+    public:
+        TaskGroup() = default;
+        
+        /**
+         * @brief 创建并添加新任务
+         * @tparam F 函数类型
+         * @param func 返回Task的函数
+         * @return 创建的Task对象
+         */
+        template<typename F>
+        Task<ResultType> spawn(F&& func) {
+            auto task = func();
+            m_tasks.push_back(std::move(task));
+            return task;
         }
-    }
-    
-    void clear() {
-        m_tasks.clear();
-    }
+        
+        /**
+         * @brief 取消所有任务
+         */
+        void cancel() {
+            for (auto& task : m_tasks) {
+                task.cancel();
+            }
+        }
+        
+        /**
+         * @brief 清空任务组
+         */
+        void clear() {
+            m_tasks.clear();
+        }
 
-private:
-    std::vector<Task<ResultType>> m_tasks;
-};
+    private:
+        /** @brief 任务列表 */
+        std::vector<Task<ResultType>> m_tasks;
+    };
 
 }
