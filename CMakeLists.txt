@@ -48,5 +48,8 @@ target_link_libraries(udp_echo_server PRIVATE CoroRpc)
 add_executable(echo_client tests/echo_client.cc)
 target_link_libraries(echo_client PRIVATE CoroRpc)
 
+add_executable(http_echo_server tests/http_echo_server.cc)
+target_link_libraries(http_echo_server PRIVATE CoroRpc)
+
 add_executable(load_test tests/load_test.cc)
 target_link_libraries(load_test PRIVATE CoroRpc)
