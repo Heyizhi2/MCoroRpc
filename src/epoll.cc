@@ -14,20 +14,33 @@
 #include <unistd.h>
 #include <utility>
 namespace Coro{
+    /**
+     * @brief 构造函数
+     * @details 创建 epoll 文件描述符
+     */
    Epoll::Epoll(){
         m_epoll_fd=epoll_create1(0);
         if(m_epoll_fd==-1){
             std::abort();
-
         }
    }
 
+    /**
+     * @brief 析构函数
+     * @details 关闭 epoll 文件描述符
+     */
    Epoll::~Epoll(){
         if (m_epoll_fd!=-1) {
             close(m_epoll_fd);
         }
    }
 
+    /**
+     * @brief 添加读事件监听
+     * @param fd 文件描述符
+     * @param wait_id 等待ID，用于标识和取消
+     * @return 是否添加成功
+     */
     bool Epoll::add_reader(int fd,uint64_t wait_id){
         auto &ev=m_event_map[fd];
         if(ev.reader!=0){
@@ -46,6 +59,12 @@ namespace Coro{
         return true;
     }
 
+    /**
+     * @brief 添加写事件监听
+     * @param fd 文件描述符
+     * @param wait_id 等待ID，用于标识和取消
+     * @return 是否添加成功
+     */
     bool Epoll::add_writer(int fd,uint64_t wait_id){
         auto &ev=m_event_map[fd];
         if(ev.writer!=0){
@@ -64,6 +83,11 @@ namespace Coro{
         return true;
     }
 
+    /**
+     * @brief 取消等待
+     * @param wait_id 要取消的等待ID
+     * @details 从 epoll 中移除对应的事件监听
+     */
    void Epoll::cancel_wait(uint64_t wait_id) {
         auto it = m_wait_to_fd.find(wait_id);
         if (it == m_wait_to_fd.end()) return;

@@ -15,6 +15,12 @@
 #include <vector>
 
 namespace Coro {
+        /**
+         * @brief 编码消息
+         * @param message 要编码的消息列表
+         * @param out_buf 输出缓冲区
+         * @details 将 TinyPBProtocol 消息编码为二进制格式写入缓冲区
+         */
         void TinyPBCoder::encode(std::vector<AbstarcPortocol::s_ptr> &message,net::TcpBuffer::s_ptr out_buf){
             
             for(auto &i:message){
@@ -32,6 +38,13 @@ namespace Coro {
         }
 
 
+        /**
+         * @brief 解码消息
+         * @param out_message 输出：解析出的消息列表
+         * @param buf 输入缓冲区
+         * @details 从缓冲区中解析 TinyPB 协议消息，支持粘包处理
+         * @note 协议格式: START(1) + pk_len(4) + msg_id_len(4) + msg_id + method_name_len(4) + method_name + err_code(4) + err_info_len(4) + err_info + pb_data + check_sum(4) + END(1)
+         */
         void TinyPBCoder::decode(std::vector<AbstarcPortocol::s_ptr> &out_message,net::TcpBuffer::s_ptr buf){
             while (true) {
                  //遍历buf,找到PB_Start标志，捕获msg_len,并判断在这个长度下是否能够找到PD_END
@@ -140,9 +153,15 @@ namespace Coro {
             
             }
           
-
+        
         }
         
+        /**
+         * @brief 编码单个 TinyPB 消息
+         * @param message 要编码的消息
+         * @param len 输出：编码后的长度
+         * @return 编码后的二进制数据(需手动free)
+         */
         const char* TinyPBCoder::encoderTinyPB(std::shared_ptr<TinyPBProtocol> message,int &len){
                 if (message->m_msg_id.empty()) {
                         message->m_msg_id = "123456789";
@@ -154,13 +173,16 @@ namespace Coro {
                     char* buf = reinterpret_cast<char*>(malloc(pk_len));
                     char* tmp = buf;
 
+                    // 写入协议头 START
                     *tmp = TinyPBProtocol::PB_START;
                     tmp++;
 
+                    // 写入数据包长度(网络字节序)
                     int32_t pk_len_net = htonl(pk_len);
                     memcpy(tmp, &pk_len_net, sizeof(pk_len_net));
                     tmp += sizeof(pk_len_net);
 
+                    // 写入消息ID长度和内容
                     int msg_id_len = message->m_msg_id.length();
                     int32_t msg_id_len_net = htonl(msg_id_len);
                     memcpy(tmp, &msg_id_len_net, sizeof(msg_id_len_net));
@@ -171,6 +193,7 @@ namespace Coro {
                         tmp += msg_id_len;
                     }
 
+                    // 写入方法名长度和内容
                     int method_name_len = message->m_method_name.length();
                     int32_t method_name_len_net = htonl(method_name_len);
                     memcpy(tmp, &method_name_len_net, sizeof(method_name_len_net));
@@ -181,10 +204,12 @@ namespace Coro {
                         tmp += method_name_len;
                     }
 
+                    // 写入错误码
                     int32_t err_code_net = htonl(message->m_err_code);
                     memcpy(tmp, &err_code_net, sizeof(err_code_net));
                     tmp += sizeof(err_code_net);
 
+                    // 写入错误信息长度和内容
                     int err_info_len = message->m_err_info.length();
                     int32_t err_info_len_net = htonl(err_info_len);
                     memcpy(tmp, &err_info_len_net, sizeof(err_info_len_net));
@@ -195,17 +220,21 @@ namespace Coro {
                         tmp += err_info_len;
                     }
 
+                    // 写入 protobuf 数据
                     if (!message->m_pb_data.empty()) {
                         memcpy(tmp, &(message->m_pb_data[0]), message->m_pb_data.length());
                         tmp += message->m_pb_data.length();
                     }
 
+                    // 写入校验和(暂时固定为1)
                     int32_t check_sum_net = htonl(1);
                     memcpy(tmp, &check_sum_net, sizeof(check_sum_net));
                     tmp += sizeof(check_sum_net);
 
+                    // 写入协议尾 END
                     *tmp = TinyPBProtocol::PB_END;
 
+                    // 更新消息的元数据
                     message->m_pk_len = pk_len;
                     message->m_msg_id_len = msg_id_len;
                     message->m_method_name_len = method_name_len;

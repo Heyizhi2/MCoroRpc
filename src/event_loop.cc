@@ -14,6 +14,13 @@
 #include <sys/epoll.h>
 #include <coroutine>
 namespace Coro {
+    /**
+     * @brief 注册一个立即执行的回调
+     * @param handle 协程句柄
+     * @param callback 回调函数
+     * @param coro 协程句柄
+     * @return 等待ID
+     */
     uint64_t Eventloop::call_soon(Handle& handle,Callback callback, std::coroutine_handle<> coro){
         auto wait_id=next_wait_id++;
         auto id=handle.id();
@@ -23,17 +30,28 @@ namespace Coro {
         return wait_id;
     }
 
+    /**
+     * @brief 获取全局事件循环单例
+     * @return 事件循环引用
+     */
     Eventloop& get_event_loop(){
         static Eventloop loop;
         return  loop;
     }
 
+    /**
+     * @brief 运行事件循环直到停止
+     */
     void Eventloop::run_until_complete(){
         while (!is_stop()) {
             run_once();
         }
     }
 
+    /**
+     * @brief 运行一次事件循环迭代
+     * @details 处理 epoll 事件、超时回调和就绪回调
+     */
     void Eventloop::run_once(){
         int timeout_ms=-1;
         if(!m_ready_queue.empty()){
@@ -54,6 +72,14 @@ namespace Coro {
         execute_ready_callback();
     }
 
+    /**
+     * @brief 注册一个定时回调
+     * @param when 执行时间点
+     * @param handle 协程句柄
+     * @param cb 回调函数
+     * @param coro 协程句柄
+     * @return 等待ID
+     */
     uint64_t Eventloop::call_at(types::TimePoint when,Handle&handle,Callback cb, std::coroutine_handle<> coro){
         auto wait_id=next_wait_id++;
         auto id=handle.id();
@@ -66,6 +92,11 @@ namespace Coro {
         return wait_id;
     }
 
+    /**
+     * @brief 处理 epoll 事件
+     * @param timeout 超时时间(毫秒)
+     * @details 监听可读/可写事件，将就绪的等待放入就绪队列
+     */
     void Eventloop::process_epoll_event(int timeout){
         epoll_event events[10000];
         int n=m_epoll.wait(events,10000,timeout);
@@ -80,6 +111,10 @@ namespace Coro {
         }
     }
 
+    /**
+     * @brief 处理已超时的定时任务
+     * @details 将超时的定时任务加入就绪队列
+     */
     void Eventloop::process_expired_timeout(){
         auto now=types::Clock::now();
         while(!m_scheduled.empty()&&now>=m_scheduled[0].second){
@@ -92,6 +127,10 @@ namespace Coro {
         }
     }
 
+    /**
+     * @brief 执行就绪队列中的回调
+     * @details 按 FIFO 顺序执行所有就绪回调
+     */
     void Eventloop::execute_ready_callback(){
         while (!m_ready_queue.empty()) {
             uint64_t wait_id=m_ready_queue.front();
@@ -105,6 +144,15 @@ namespace Coro {
         }
     }
 
+    /**
+     * @brief 创建包装回调
+     * @details 在用户回调执行后清理协程等待状态
+     * @param wait_id 等待ID
+     * @param coro_id 协程ID
+     * @param cb 用户回调
+     * @param coro 协程句柄
+     * @return 包装后的回调
+     */
     Eventloop::WaitCallback Eventloop::make_warped_callback(uint64_t wait_id,Handle::ID coro_id,Callback cb, std::coroutine_handle<> coro){
         auto wrapped = [this,coro_id,wait_id,user_cb=std::move(cb)](){
             user_cb();
@@ -119,6 +167,10 @@ namespace Coro {
         return WaitCallback{std::move(wrapped), coro};
     }
 
+    /**
+     * @brief 取消指定协程的所有等待
+     * @param cancelled_id 要取消的协程ID
+     */
     void Eventloop::cancel(Handle::ID cancelled_id){
         auto it=m_coro_waits.find(cancelled_id);
         if(it==m_coro_waits.end()) return;
@@ -128,6 +180,11 @@ namespace Coro {
         m_coro_waits.erase(it);
     }
 
+    /**
+     * @brief 取消指定等待
+     * @param wait_id 等待ID
+     * @return 被取消的回调(如果有)
+     */
     std::optional<Eventloop::Callback> Eventloop::cancel_wait(uint64_t wait_id){
         auto it=m_wait_callback.find(wait_id);
         std::optional<Callback> res;
@@ -157,6 +214,14 @@ namespace Coro {
         return res;
     }
 
+    /**
+     * @brief 添加写事件监听
+     * @param fd 文件描述符
+     * @param handle 协程句柄
+     * @param cb 回调函数
+     * @param coro 协程句柄
+     * @return 等待ID，0表示失败
+     */
     uint64_t Eventloop::add_writer(int fd,Handle& handle,Callback cb, std::coroutine_handle<> coro){
         auto wait_id=next_wait_id++;
         auto id=handle.id();
@@ -173,6 +238,14 @@ namespace Coro {
         return wait_id;
     }
         
+    /**
+     * @brief 添加读事件监听
+     * @param fd 文件描述符
+     * @param handle 协程句柄
+     * @param cb 回调函数
+     * @param coro 协程句柄
+     * @return 等待ID，0表示失败
+     */
     uint64_t Eventloop::add_reader(int fd,Handle& handle,Callback cb, std::coroutine_handle<> coro){
         auto wait_id=next_wait_id++;
         auto id=handle.id();

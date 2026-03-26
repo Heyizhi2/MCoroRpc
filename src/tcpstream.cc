@@ -1,8 +1,19 @@
+/**
+ * @file tcpstream.cc
+ * @brief TCP 流实现
+ * @details 提供协程化的 TCP 读写接口，基于 epoll 实现异步 I/O
+ */
+
 #include "../include/coro.hpp"
 
 namespace Coro {
 namespace net {
 
+/**
+ * @brief 构造函数
+ * @param fd 文件描述符
+ * @param bufferSize 读写缓冲区大小
+ */
 TcpStream::TcpStream(int fd, int64_t bufferSize)
     : m_fd(fd), 
       m_read_buffer(std::make_shared<TcpBuffer>(bufferSize)),
@@ -13,6 +24,9 @@ TcpStream::TcpStream(int fd, int64_t bufferSize)
     }
 }
 
+/**
+ * @brief 移动构造函数
+ */
 TcpStream::TcpStream(TcpStream&& other) noexcept
     : m_fd(std::exchange(other.m_fd, -1)),
       m_local_addr(other.m_local_addr),
@@ -20,6 +34,9 @@ TcpStream::TcpStream(TcpStream&& other) noexcept
       m_write_buffer(std::move(other.m_write_buffer)) {
 }
 
+/**
+ * @brief 移动赋值运算符
+ */
 TcpStream& TcpStream::operator=(TcpStream&& other) noexcept {
     if (this != &other) {
         close();
@@ -31,6 +48,9 @@ TcpStream& TcpStream::operator=(TcpStream&& other) noexcept {
     return *this;
 }
 
+/**
+ * @brief 关闭连接
+ */
 void TcpStream::close() {
     if (m_fd >= 0) {
         ::close(m_fd);
@@ -38,6 +58,11 @@ void TcpStream::close() {
     }
 }
 
+/**
+ * @brief 读取数据
+ * @param size 要读取的字节数，-1 表示读取到 EOF
+ * @return 协程Task，返回读取到的数据
+ */
 Task<TcpStream::buffer_type> TcpStream::read(ssize_t size) {
     if (size < 0) {
         co_return co_await read_until_eof();
@@ -50,6 +75,11 @@ Task<TcpStream::buffer_type> TcpStream::read(ssize_t size) {
     co_return result;
 }
 
+/**
+ * @brief 读取数据到内部缓冲区
+ * @return 协程Task，返回读取的总字节数
+ * @details 使用 epoll 异步等待数据，直到无数据可读
+ */
 Task<ssize_t> TcpStream::readToBuffer() {
     char tmp[4096];
     ssize_t total = 0;
@@ -78,12 +108,22 @@ Task<ssize_t> TcpStream::readToBuffer() {
     co_return total;
 }
 
+/**
+ * @brief 写入数据
+ * @param buffer 要写入的数据
+ * @return 协程Task
+ */
 Task<> TcpStream::write(const buffer_type& buffer) {
     m_write_buffer->writeToBuffer(buffer.data(), buffer.size());
     co_await writeFromBuffer();
     co_return;
 }
 
+/**
+ * @brief 从内部缓冲区发送数据
+ * @return 协程Task
+ * @details 使用 epoll 异步等待可写事件
+ */
 Task<> TcpStream::writeFromBuffer() {
     while (m_write_buffer->readAble() > 0) {
         ssize_t n = ::send(m_fd, 
@@ -105,6 +145,10 @@ Task<> TcpStream::writeFromBuffer() {
     co_return;
 }
 
+/**
+ * @brief 读取数据直到 EOF
+ * @return 协程Task，返回所有读取的数据
+ */
 Task<TcpStream::buffer_type> TcpStream::read_until_eof() {
     co_await readToBuffer();
 
