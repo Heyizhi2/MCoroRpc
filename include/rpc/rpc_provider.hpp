@@ -74,7 +74,7 @@ private:
     std::unique_ptr<Coro::net::TcpService> m_tcpService;
     std::unique_ptr<RpcDispatcher> m_dispatcher;
     
-    std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_stop{true};
     bool m_started = false;
 };
 
