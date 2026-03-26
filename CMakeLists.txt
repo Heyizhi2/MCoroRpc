@@ -22,6 +22,7 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/src/tinypb_protocol.cc
     ${CMAKE_SOURCE_DIR}/src/tinypb_coder.cc
     ${CMAKE_SOURCE_DIR}/src/zkclient.cc
+    ${CMAKE_SOURCE_DIR}/src/rpc_provider.cc
 )
 
 add_library(CoroRpc STATIC ${SOURCES})

@@ -65,6 +65,19 @@ void ZkClient::deleteCompletion(int rc, const void* data) {
     delete op;
 }
 
+void ZkClient::getChildrenCompletion(int rc, const struct String_vector* strings, const struct Stat* stat, const void* data) {
+    auto* op = static_cast<PendingOp*>(const_cast<void*>(data));
+    std::string dataStr;
+    if (strings && strings->count > 0) {
+        for (int i = 0; i < strings->count; ++i) {
+            if (i > 0) dataStr += ",";
+            dataStr += strings->data[i];
+        }
+    }
+    op->channel->send(ZkResult{rc, dataStr, ""});
+    delete op;
+}
+
 void ZkClient::cleanupPendingOps() {
     std::lock_guard<std::mutex> lock(m_pendingMutex);
     for (auto* op : m_pendingOps) {
@@ -222,6 +235,38 @@ Coro::Task<ZkResult> ZkClient::deleteNode(const std::string& path, int version) 
     
     ZkResult result = co_await channel->recv();
     co_return result;
+}
+
+Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path) {
+    if (!m_connected.load()) {
+        co_return ZkResult{ZINVALIDSTATE, "", "not connected"};
+    }
+
+    auto channel = std::make_shared<Coro::Channel<ZkResult>>();
+    auto* op = new PendingOp{
+        .opType = ZOO_GETCHILDREN_OP,
+        .path = path,
+        .data = "",
+        .flags = 0,
+        .version = -1,
+        .channel = channel
+    };
+    
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingOps.push_back(op);
+    }
+    
+    int rc = zoo_aget_children2(m_zkHandle, path.c_str(), 0, getChildrenCompletion, op);
+    
+    if (rc != ZOK) {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingOps.erase(std::remove(m_pendingOps.begin(), m_pendingOps.end(), op), m_pendingOps.end());
+        delete op;
+        co_return ZkResult{rc, "", ""};
+    }
+    
+    co_return co_await channel->recv();
 }
 
 void ZkClient::close() {

@@ -59,6 +59,7 @@ public:
     Coro::Task<ZkResult> getData(const std::string& path);
     Coro::Task<ZkResult> setData(const std::string& path, const std::string& data, int version = -1);
     Coro::Task<ZkResult> deleteNode(const std::string& path, int version = -1);
+    Coro::Task<ZkResult> getChildren(const std::string& path);
     void close();
 
 private:
@@ -78,6 +79,8 @@ private:
                               const struct Stat* stat, const void* data);
     static void setCompletion(int rc, const struct Stat* stat, const void* data);
     static void deleteCompletion(int rc, const void* data);
+    static void getChildrenCompletion(int rc, const struct String_vector* strings, 
+                                      const struct Stat* stat, const void* data);
 
     void cleanupPendingOps();
 

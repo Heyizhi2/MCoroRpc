@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-26 15:57:52
+ * @LastEditTime: 2026-03-26 17:26:27
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -468,6 +468,12 @@ m_connected 使用 std::atomic<bool>，可以在任意线程安全查询连接�
 ✅ 资源清理
 close() 中会清理所有 pending 操作（发送错误并释放内存），并关闭 ZooKeeper 句柄，尽力避免资源泄漏。
 
+
+协程异步	所有 ZK 操作都是非阻塞
+错误处理	通过 ZkResult 获取错误信息
+自动注册	start() 时自动将服务注册到 ZK
+服务发现	discoverService() 查询服务地址
+临时节点	服务宕机后节点自动删除
 
 
 协程A                    ZooKeeper                    线程池
