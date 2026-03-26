@@ -98,8 +98,18 @@ Coro::Task<ZkResult> ZkClient::start() {
         co_return ZkResult{ZSYSTEMERROR, "", "failed to init zookeeper"};
     }
     
-    ZkResult result = co_await m_connectChannel->recv();
-    co_return result;
+    auto result = co_await Coro::wait_for(m_connectChannel->recv(), std::chrono::seconds(5));
+    
+    if (!result.ok || result.is_timeout) {
+        if (m_zkHandle) {
+            zookeeper_close(m_zkHandle);
+            m_zkHandle = nullptr;
+        }
+        m_connected.store(false);
+        co_return ZkResult{ZSYSTEMERROR, "", result.is_timeout ? "connection timeout" : "connection failed"};
+    }
+    
+    co_return std::move(result.value);
 }
 
 Coro::Task<ZkResult> ZkClient::create(const std::string& path, 

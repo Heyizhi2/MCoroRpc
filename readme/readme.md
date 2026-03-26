@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-26 19:08:42
+ * @LastEditTime: 2026-03-26 20:15:23
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -557,3 +557,29 @@ wait_for 在内部创建 wrapper 协程执行原始任务，通过 timer 实现�
 添加了 m_coro_waits.empty() 检查，确保有挂起协程时不退出。
 
 关于 wait_for：之前 segfault 的原因是 wait_for 的内部实现与协程调度交互存在问题（Task 复制、lambda 捕获等）。基本的连接功能现在通过 is_stop() 修改已正常工作。如需超时功能，可以进一步调试 wait_for 的实现。
+
+#### wait_for实现
+核心思路：
+
+启动一个独立的 timeout_task 协程来处理超时
+使用 completed 标志位确保超时任务只在任务未完成时执行 cancel
+使用 timeout_flag 区分是超时还是正常完成
+简单可靠，避免了复杂的句柄生命周期管理
+
+- 正常完成流程
+1. timeout_task 启动 → sleep_for(5s)
+2. 原始 task 启动 → co_await channel->recv()
+3. Zookeeper 连接成功 → channel.send() 唤醒原始 task
+4. 原始 task 继续执行 → result.value = ..., result.ok = true
+5. completed.store(true)
+6. timeout_task 的 sleep 醒来后检查 completed=true，不执行 cancel
+7. wait_for 返回 result = {ok: true, value: ..., is_timeout: false}
+
+超时流程
+1. timeout_task 启动 → sleep_for(5s)
+2. 原始 task 启动 → co_await channel->recv()
+3. 5秒后 timeout_task 醒来 → 检查 completed=false
+4. timeout_flag.store(true), task.cancel() → 原始 task 被取消
+5. 原始 task 的 co_await 抛出异常，被 catch 捕获
+6. completed.store(true)
+7. wait_for 返回 result = {ok: false, is_timeout: true}
