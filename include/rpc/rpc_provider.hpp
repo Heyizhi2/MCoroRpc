@@ -4,9 +4,15 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include <atomic>
+#include <functional>
 #include "zkclient.hpp"
 #include "../coro/task.hpp"
 #include "../coro/channel.hpp"
+#include "../net/tcpservice.hpp"
+#include "../net/tcpstream.hpp"
+#include "../coder/tinypb_protocol.hpp"
+#include "../coder/tinypb_coder.hpp"
 
 namespace AlphaMin {
 
@@ -14,6 +20,25 @@ struct RpcServiceInfo {
     google::protobuf::Service* service;
     std::string service_name;
     std::vector<std::string> methods;
+};
+
+class RpcDispatcher {
+public:
+    using ptr = std::shared_ptr<RpcDispatcher>;
+
+    void registerService(google::protobuf::Service* service);
+    
+    void dispatch(std::shared_ptr<Coro::TinyPBProtocol> request, 
+                  std::shared_ptr<Coro::TinyPBProtocol> response);
+
+    std::unordered_map<std::string, RpcServiceInfo>& getServices() { return m_services; }
+
+private:
+    bool parseServiceFullName(const std::string& full_name, 
+                              std::string& service_name, 
+                              std::string& method_name);
+
+    std::unordered_map<std::string, RpcServiceInfo> m_services;
 };
 
 class RpcProvider {
@@ -31,8 +56,13 @@ public:
     
     Coro::Task<void> start();
 
+    void stop();
+
+    bool isStopped() const { return m_stop.load(); }
+
 private:
     Coro::Task<void> registerToZk();
+    Coro::Task<void> handleClient(Coro::net::TcpStream stream);
 
     std::string getLocalAddr();
 
@@ -41,7 +71,10 @@ private:
     int m_port = 8000;
 
     ZkClient::ptr m_zkClient;
-    std::unordered_map<std::string, RpcServiceInfo> m_services;
+    std::unique_ptr<Coro::net::TcpService> m_tcpService;
+    std::unique_ptr<RpcDispatcher> m_dispatcher;
+    
+    std::atomic<bool> m_stop{false};
     bool m_started = false;
 };
 

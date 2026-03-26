@@ -126,7 +126,7 @@ namespace Coro {
          * @return true 表示应停止（无更多任务）
          */
         bool is_stop(){
-            return m_ready_queue.empty()&&m_scheduled.empty()&&m_epoll.is_stop();
+            return m_ready_queue.empty() && m_scheduled.empty() && m_epoll.is_stop() && m_coro_waits.empty();
         }
         
         /**

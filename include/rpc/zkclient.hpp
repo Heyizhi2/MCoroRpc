@@ -94,4 +94,4 @@ private:
     std::vector<PendingOp*> m_pendingOps;
 };
 
-}
+}  // namespace AlphaMin

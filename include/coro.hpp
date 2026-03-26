@@ -13,6 +13,7 @@
 #include "coro/task.hpp"
 #include "coro/sleep.hpp"
 #include "coro/channel.hpp"
+#include "coro/wait_for.hpp"
 #include "selector/epoll.hpp"
 #include "net/ioawaiter.hpp"
 #include "net/tcpconnector.hpp"

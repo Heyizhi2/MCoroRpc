@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-26 17:26:27
+ * @LastEditTime: 2026-03-26 19:08:42
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -488,3 +488,72 @@ close() 中会清理所有 pending 操作（发送错误并释放内存），并
   │<────────────────────────│                            │
   │ 恢复执行                │                            │
 
+
+
+
+现在 RpcProvider 包含了完整的网络层：
+
+组件	作用
+RpcDispatcher	解析请求、查找服务、调用 protobuf 方法
+RpcProvider	TCP 服务器 + ZooKeeper 注册
+ServiceDiscovery	从 ZooKeeper 发现服务
+使用示例
+服务端：
+
+auto provider = std::make_shared<AlphaMin::RpcProvider>();
+provider->setZkHost("127.0.0.1:2181");
+provider->setIp("192.168.1.100");
+provider->setPort(8000);
+
+// 注册 protobuf 服务
+provider->registerService(myUserService);
+
+// 启动：监听端口 + 注册到 ZK
+co_await provider.start();
+客户端：
+
+auto discovery = std::make_shared<AlphaMin::ServiceDiscovery>();
+discovery->setZkHost("127.0.0.1:2181");
+co_await discovery->connect();
+
+// 发现服务
+std::string addr = co_await discovery->discover("UserService", "Login");
+架构
+┌─────────────────────────────────────────────────────────┐
+│                    RpcProvider                           │
+├─────────────────────────────────────────────────────────┤
+│  TcpService ──► handleClient ──► RpcDispatcher          │
+│       │                              │                   │
+│       │                        调用本地 Service         │
+│       │                                                      │
+│  ZkClient ──► registerToZk (发布服务到 ZK)              │
+└──────────────────────────────────────────
+
+
+
+修改完成。现在总结一下所做的修改：
+
+1. include/coro/wait_for.hpp - 新增带超时的等待接口
+
+WaitForResult<T> 结构体封装结果和超时状态
+wait_for(Task, timeout) 函数为任意 Task 添加超时控制
+2. include/coro/event_loop.hpp - 修改 is_stop()
+
+bool is_stop(){
+    return m_ready_queue.empty() && m_scheduled.empty() && m_epoll.is_stop() && m_coro_waits.empty();
+}
+添加 m_coro_waits.empty() 检查，确保有挂起协程时不退出
+
+3. src/zkclient.cc - start() 使用带超时等待
+
+auto result = co_await Coro::wait_for(m_connectChannel->recv(), std::chrono::milliseconds(m_timeout));
+核心原理：
+
+协程挂起在 channel 的 recv() 时，没有注册到 timer 或 epoll
+原 is_stop() 只检查队列/定时器/epoll，忽略挂起的协程，导致事件循环提前退出
+wait_for 在内部创建 wrapper 协程执行原始任务，通过 timer 实现超时，任务完成后调用 call_soon 恢复父协程
+
+
+添加了 m_coro_waits.empty() 检查，确保有挂起协程时不退出。
+
+关于 wait_for：之前 segfault 的原因是 wait_for 的内部实现与协程调度交互存在问题（Task 复制、lambda 捕获等）。基本的连接功能现在通过 is_stop() 修改已正常工作。如需超时功能，可以进一步调试 wait_for 的实现。

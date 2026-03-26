@@ -10,6 +10,15 @@ find_package(Catch2 REQUIRED)
 find_package(Protobuf REQUIRED)
 find_library(ZOOKEEPER_LIBRARY NAMES zookeeper_mt zookeeper REQUIRED)
 
+# Set protobuf targets if not available
+if(TARGET protobuf::libprotobuf)
+  set(PROTOBUF_TARGET protobuf::libprotobuf)
+elseif(TARGET protobuf)
+  set(PROTOBUF_TARGET protobuf)
+else()
+  set(PROTOBUF_TARGET protobuf-static)
+endif()
+
 include_directories(include)
 
 set(SOURCES
@@ -26,6 +35,7 @@ set(SOURCES
 )
 
 add_library(CoroRpc STATIC ${SOURCES})
+target_link_libraries(CoroRpc PUBLIC ${ZOOKEEPER_LIBRARY} ${PROTOBUF_TARGET})
 
 add_executable(test_task tests/test_task.cc)
 target_link_libraries(test_task PRIVATE CoroRpc Catch2::Catch2WithMain)
@@ -58,3 +68,12 @@ target_link_libraries(http_echo_server PRIVATE CoroRpc)
 
 add_executable(load_test tests/load_test.cc)
 target_link_libraries(load_test PRIVATE CoroRpc)
+
+add_executable(test_zkclient tests/test_zkclient.cc)
+target_link_libraries(test_zkclient PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOOKEEPER_LIBRARY})
+
+add_executable(test_service_discovery tests/test_service_discovery.cc)
+target_link_libraries(test_service_discovery PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOOKEEPER_LIBRARY})
+
+add_executable(test_rpc_provider tests/test_rpc_provider.cc)
+target_link_libraries(test_rpc_provider PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOOKEEPER_LIBRARY})
