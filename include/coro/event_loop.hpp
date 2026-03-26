@@ -129,6 +129,10 @@ namespace Coro {
             return m_ready_queue.empty() && m_scheduled.empty() && m_epoll.is_stop() && m_coro_waits.empty();
         }
         
+        bool has_pending_coroutines() const {
+            return !m_coro_waits.empty();
+        }
+        
         /**
          * @brief 执行一次事件循环
          * @details 处理IO事件、定时器和就绪回调

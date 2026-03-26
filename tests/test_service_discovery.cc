@@ -5,19 +5,30 @@
  */
 #include "../include/coro.hpp"
 #include "../include/rpc/rpc_provider.hpp"
+#include "../include/coro/sleep.hpp"
 #include <catch2/catch.hpp>
 
 TEST_CASE("ServiceDiscovery basic operations", "[service_discovery]") {
-    auto discovery = std::make_shared<AlphaMin::ServiceDiscovery>();
-    discovery->setZkHost("127.0.0.1:2181");
-    discovery->setTimeout(30000);
-    
     SECTION("connect to zookeeper") {
-        auto task = discovery->connect();
-        task.schedule();
-        Coro::get_event_loop().run_until_complete();
+        auto task = []() -> Coro::Task<void> {
+            auto discovery = std::make_shared<AlphaMin::ServiceDiscovery>();
+            discovery->setZkHost("127.0.0.1:2181");
+            discovery->setTimeout(30000);
+            
+            co_await discovery->connect();
+            
+            // Keep alive to let connection complete
+            co_await Coro::sleep_for(std::chrono::milliseconds(50));
+            
+            REQUIRE(discovery->isConnected() == true);
+            
+            discovery->close();
+            co_return;
+        };
         
-        REQUIRE(discovery->isConnected() == true);
+        auto t = task();
+        t.schedule();
+        Coro::get_event_loop().run_until_complete();
     }
     
     SECTION("discover service") {
