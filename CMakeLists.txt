@@ -4,20 +4,24 @@ project(MCoroRpc)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines")
-set(CMAKE_BUILD_TYPE Release)  # 或在命令行 cmake -DCMAKE_BUILD_TYPE=Debug ..
+set(CMAKE_BUILD_TYPE Release)
+
 find_package(Catch2 REQUIRED)
+find_package(Protobuf REQUIRED)
+find_library(ZOOKEEPER_LIBRARY NAMES zookeeper_mt zookeeper REQUIRED)
 
 include_directories(include)
 
 set(SOURCES
-    src/event_loop.cc
-    src/handle.cc
-    src/timer.cc
-    src/epoll.cc
-    src/tcp_buffer.cc
-    src/tcpstream.cc
-    src/tinypb_protocol.cc
-    src/tinypb_coder.cc
+    ${CMAKE_SOURCE_DIR}/src/event_loop.cc
+    ${CMAKE_SOURCE_DIR}/src/handle.cc
+    ${CMAKE_SOURCE_DIR}/src/timer.cc
+    ${CMAKE_SOURCE_DIR}/src/epoll.cc
+    ${CMAKE_SOURCE_DIR}/src/tcp_buffer.cc
+    ${CMAKE_SOURCE_DIR}/src/tcpstream.cc
+    ${CMAKE_SOURCE_DIR}/src/tinypb_protocol.cc
+    ${CMAKE_SOURCE_DIR}/src/tinypb_coder.cc
+    ${CMAKE_SOURCE_DIR}/src/zkclient.cc
 )
 
 add_library(CoroRpc STATIC ${SOURCES})

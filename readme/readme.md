@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-25 15:45:34
+ * @LastEditTime: 2026-03-26 15:57:52
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -441,3 +441,44 @@ wc -l include/**/*.hpp src/*.cc
 纯手写协程调度（非依赖现成库）
 完整网络IO封装
 Channel 并发原语
+
+#### zkclient部分
+1. 整体架构与设计思路
+异步 API + 协程 Channel：所有 ZooKeeper 操作（create, getData, setData, deleteNode）都使用异步函数（zoo_acreate, zoo_aget 等），并传递一个 PendingOp 结构，其中包含一个 Channel<ZkResult>。协程通过 co_await channel->recv() 挂起，等待回调将结果发送到通道后恢复。这完美实现了协程的非阻塞语义。
+
+统一的 ZkResult：将返回码、数据、路径封装在一个结构体中，提供 ok() 和 error() 方法，使得错误处理清晰且统一。
+
+连接管理：start() 协程通过全局 watcher 监听会话事件，并通过 m_connectChannel 等待连接建立或失败。
+
+线程安全：使用 std::atomic<bool> 记录连接状态，用 std::mutex 保护 m_pendingOps 容器，避免多线程并发修改。
+
+2. 代码亮点
+✅ 真正的异步非阻塞
+每个操作都使用异步 API，协程在等待期间不占用线程，可让线程处理其他任务，充分利用协程的并发能力。
+
+✅ 动态内存管理
+PendingOp 在堆上分配，回调中负责删除，避免了使用固定大小缓冲区带来的截断风险，也无需调用者显式管理内存。
+
+✅ 错误信息丰富
+ZkResult 将返回码转换为可读字符串，且携带操作相关的数据（如创建节点的路径、读取的数据），便于上层处理。
+
+✅ 连接状态原子化
+m_connected 使用 std::atomic<bool>，可以在任意线程安全查询连接状态。
+
+✅ 资源清理
+close() 中会清理所有 pending 操作（发送错误并释放内存），并关闭 ZooKeeper 句柄，尽力避免资源泄漏。
+
+
+
+协程A                    ZooKeeper                    线程池
+  │                         │                            │
+  │ co_await create()      │                            │
+  │────────────────────────>│                            │
+  │                         │  异步API + 回调            │
+  │      (挂起)            │───────────────────────────>│
+  │                         │                            │ 处理请求
+  │                         │<───────────────────────────│
+  │  Channel 收到结果       │                            │
+  │<────────────────────────│                            │
+  │ 恢复执行                │                            │
+
