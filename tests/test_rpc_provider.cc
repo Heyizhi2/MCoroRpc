@@ -12,7 +12,7 @@
 
 TEST_CASE("RpcProvider lifecycle", "[rpc_provider]") {
     SECTION("create and configure provider") {
-        auto provider = std::make_shared<AlphaMin::RpcProvider>();
+        auto provider = std::make_shared<Coro::RpcProvider>();
         
         provider->setZkHost("127.0.0.1:2181");
         provider->setIp("127.0.0.1");
@@ -23,7 +23,7 @@ TEST_CASE("RpcProvider lifecycle", "[rpc_provider]") {
     
     SECTION("start provider with zookeeper") {
         auto task = []() -> Coro::Task<void> {
-            auto provider = std::make_shared<AlphaMin::RpcProvider>();
+            auto provider = std::make_shared<Coro::RpcProvider>();
             provider->setZkHost("127.0.0.1:2181");
             provider->setIp("127.0.0.1");
             provider->setPort(18001);
@@ -48,7 +48,7 @@ TEST_CASE("RpcProvider lifecycle", "[rpc_provider]") {
 
 TEST_CASE("RpcDispatcher", "[rpc_dispatcher]") {
     SECTION("create dispatcher") {
-        auto dispatcher = std::make_shared<AlphaMin::RpcDispatcher>();
+        auto dispatcher = std::make_shared<Coro::RpcDispatcher>();
         REQUIRE(dispatcher != nullptr);
     }
     

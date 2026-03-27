@@ -32,6 +32,7 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/src/tinypb_coder.cc
     ${CMAKE_SOURCE_DIR}/src/zkclient.cc
     ${CMAKE_SOURCE_DIR}/src/rpc_provider.cc
+    ${CMAKE_SOURCE_DIR}/src/net_addr.cc
 )
 
 add_library(CoroRpc STATIC ${SOURCES})
@@ -77,3 +78,15 @@ target_link_libraries(test_service_discovery PRIVATE CoroRpc Catch2::Catch2WithM
 
 add_executable(test_rpc_provider tests/test_rpc_provider.cc)
 target_link_libraries(test_rpc_provider PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOOKEEPER_LIBRARY})
+
+add_executable(test_net_addr tests/test_net_addr.cc)
+target_link_libraries(test_net_addr PRIVATE CoroRpc Catch2::Catch2WithMain)
+
+add_executable(test_rpc_context tests/test_rpc_context.cc)
+target_link_libraries(test_rpc_context PRIVATE CoroRpc Catch2::Catch2WithMain)
+
+add_executable(test_rpc_dispatcher tests/test_rpc_dispatcher.cc)
+target_link_libraries(test_rpc_dispatcher PRIVATE CoroRpc Catch2::Catch2WithMain)
+
+add_executable(test_tcpstream tests/test_tcpstream.cc)
+target_link_libraries(test_tcpstream PRIVATE CoroRpc Catch2::Catch2WithMain)

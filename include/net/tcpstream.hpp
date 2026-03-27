@@ -31,6 +31,7 @@
 #include "../coro/task.hpp"
 #include "ioawaiter.hpp"
 #include "tcp/tcp_buffer.h"
+#include "tcp/net_addr.h"
 
 namespace Coro {
     namespace net {
@@ -78,6 +79,11 @@ namespace Coro {
              * @brief 获取本地地址
              */
             const sockaddr_storage& local_addr()const{return m_local_addr;}
+
+            /**
+             * @brief 获取对端地址
+             */
+            NetAddr::s_ptr peerAddr() const;
 
             /**
              * @brief 获取读缓冲区

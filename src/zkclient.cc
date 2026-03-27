@@ -31,6 +31,7 @@ void ZkClient::globalWatcher(zhandle_t* zh, int type, int state,
         } else if (state == ZOO_EXPIRED_SESSION_STATE) {
             // 会话过期
             self->m_connected.store(false);
+            self->cleanupPendingOps();
             if (self->m_connectChannel) {
                 self->m_connectChannel->send(ZkResult{ZSESSIONEXPIRED, "", ""});
             }

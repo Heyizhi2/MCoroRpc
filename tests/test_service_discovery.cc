@@ -11,7 +11,7 @@
 TEST_CASE("ServiceDiscovery basic operations", "[service_discovery]") {
     SECTION("connect to zookeeper") {
         auto task = []() -> Coro::Task<void> {
-            auto discovery = std::make_shared<AlphaMin::ServiceDiscovery>();
+            auto discovery = std::make_shared<Coro::ServiceDiscovery>();
             discovery->setZkHost("127.0.0.1:2181");
             discovery->setTimeout(30000);
             
@@ -33,7 +33,7 @@ TEST_CASE("ServiceDiscovery basic operations", "[service_discovery]") {
     
     SECTION("discover service") {
         auto task = []() -> Coro::Task<void> {
-            auto discovery = std::make_shared<AlphaMin::ServiceDiscovery>();
+            auto discovery = std::make_shared<Coro::ServiceDiscovery>();
             discovery->setZkHost("127.0.0.1:2181");
             
             co_await discovery->connect();
@@ -53,7 +53,7 @@ TEST_CASE("ServiceDiscovery basic operations", "[service_discovery]") {
     
     SECTION("discover all methods") {
         auto task = []() -> Coro::Task<void> {
-            auto discovery = std::make_shared<AlphaMin::ServiceDiscovery>();
+            auto discovery = std::make_shared<Coro::ServiceDiscovery>();
             discovery->setZkHost("127.0.0.1:2181");
             
             co_await discovery->connect();
@@ -74,7 +74,7 @@ TEST_CASE("ServiceDiscovery basic operations", "[service_discovery]") {
 TEST_CASE("ServiceDiscovery lifecycle", "[service_discovery]") {
     SECTION("reconnect after close") {
         auto task = []() -> Coro::Task<void> {
-            auto discovery = std::make_shared<AlphaMin::ServiceDiscovery>();
+            auto discovery = std::make_shared<Coro::ServiceDiscovery>();
             discovery->setZkHost("127.0.0.1:2181");
             
             // 第一次连接

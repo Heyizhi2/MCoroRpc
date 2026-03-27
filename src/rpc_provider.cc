@@ -1,6 +1,8 @@
 #include "../include/rpc/rpc_provider.hpp"
+#include "../include/rpc/rpc_context.h"
 #include "../include/coro.hpp"
 #include "../include/net/tcp/tcp_buffer.h"
+#include "../include/net/tcp/net_addr.h"
 #include <google/protobuf/message.h>
 #include <sstream>
 
@@ -56,17 +58,24 @@ bool RpcDispatcher::parseServiceFullName(const std::string& full_name,
  * @brief 分发 RPC 请求
  * @param request TinyPB 协议格式的请求
  * @param response TinyPB 协议格式的响应
+ * @param ctx RPC 上下文
  * @details 解析方法名，查找服务，调用对应方法，将结果写入响应
  */
 void RpcDispatcher::dispatch(std::shared_ptr<Coro::TinyPBProtocol> request, 
-                             std::shared_ptr<Coro::TinyPBProtocol> response) {
+                             std::shared_ptr<Coro::TinyPBProtocol> response,
+                             RpcContext::s_ptr ctx) {
     response->m_msg_id = request->m_msg_id;
     response->m_method_name = request->m_method_name;
+    
+    if (ctx) {
+        ctx->setMsgId(request->m_msg_id);
+    }
     
     std::string service_name, method_name;
     if (!parseServiceFullName(request->m_method_name, service_name, method_name)) {
         response->m_err_code = 1;
         response->m_err_info = "parse service name error";
+        if (ctx) ctx->setFailed(1, "parse service name error");
         return;
     }
     
@@ -74,6 +83,7 @@ void RpcDispatcher::dispatch(std::shared_ptr<Coro::TinyPBProtocol> request,
     if (it == m_services.end()) {
         response->m_err_code = 2;
         response->m_err_info = "service not found: " + service_name;
+        if (ctx) ctx->setFailed(2, "service not found: " + service_name);
         return;
     }
     
@@ -84,29 +94,33 @@ void RpcDispatcher::dispatch(std::shared_ptr<Coro::TinyPBProtocol> request,
     if (!method) {
         response->m_err_code = 3;
         response->m_err_info = "method not found: " + method_name;
+        if (ctx) ctx->setFailed(3, "method not found: " + method_name);
         return;
     }
     
-    // 解析请求数据
     google::protobuf::Message* req_msg = info.service->GetRequestPrototype(method).New();
     if (!req_msg->ParseFromString(request->m_pb_data)) {
         response->m_err_code = 4;
         response->m_err_info = "parse request error";
+        if (ctx) ctx->setFailed(4, "parse request error");
         delete req_msg;
         return;
     }
     
-    // 创建响应消息并调用服务方法
     google::protobuf::Message* rsp_msg = info.service->GetResponsePrototype(method).New();
     
     info.service->CallMethod(method, nullptr, req_msg, rsp_msg, nullptr);
     
-    // 序列化响应
     if (!rsp_msg->SerializeToString(&response->m_pb_data)) {
         response->m_err_code = 5;
         response->m_err_info = "serialize response error";
+        if (ctx) ctx->setFailed(5, "serialize response error");
     } else {
         response->m_err_code = 0;
+        if (ctx) {
+            ctx->setErrCode(0);
+            ctx->setFinished(true);
+        }
     }
     
     delete req_msg;
@@ -203,6 +217,8 @@ std::string RpcProvider::getLocalAddr() {
 Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
     auto coder = std::make_shared<Coro::TinyPBCoder>();
     
+    auto localAddr = std::make_shared<Coro::net::IPNetAddr>(m_ip, m_port);
+    
     while (!m_stop.load()) {
         std::vector<Coro::AbstarcPortocol::s_ptr> msgs;
         auto buffer = stream.getReadBuffer();
@@ -221,8 +237,18 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
                 
                 auto response = std::make_shared<Coro::TinyPBProtocol>();
                 
+                // 创建 RPC 上下文
+                auto ctx = std::make_shared<RpcContext>();
+                ctx->setLocalAddr(localAddr);
+                
+                // 获取对端地址
+                auto peerAddr = stream.peerAddr();
+                if (peerAddr) {
+                    ctx->setPeerAddr(peerAddr);
+                }
+                
                 // 调用分发器处理请求
-                m_dispatcher->dispatch(request, response);
+                m_dispatcher->dispatch(request, response, ctx);
                 
                 // 编码响应并发送
                 std::vector<Coro::AbstarcPortocol::s_ptr> responses;

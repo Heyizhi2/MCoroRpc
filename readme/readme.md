@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-26 20:59:07
+ * @LastEditTime: 2026-03-27 14:50:49
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -590,3 +590,32 @@ wait_for 在内部创建 wrapper 协程执行原始任务，通过 timer 实现�
 补充异常处理	网络断连、超时等边界情况处理
 完善文档	README 增加编译、运行示例
 添加压测脚本	方便验证性能数据
+
+
+
+老师好，我的毕业设计是基于 C++20 协程的分布式 RPC 框架，主要工作如下：
+
+1. 协程调度器（650行）
+
+EventLoop：维护任务队列、定时器、协程状态，提供协程调度入口
+Epoll：Linux 多路复用，边缘触发，感知网络 I/O 就绪
+Timer：超时检测，定时任务执行
+
+2. 协程运行时（1100行）
+Task：封装协程状态机，管理创建/挂起/恢复/取消
+Channel：协程间通信，MPMC 模型，替代回调
+WaitFor：超时控制，为异步操作添加超时检测
+
+3. 网络层（550行）
+TcpStream/TcpBuffer：协程异步读写，缓冲区管理
+TcpService：协程化 accept，接收客户端连接
+
+4. RPC框架（1000行）
+TinyPB：二进制协议编解码
+RpcProvider：服务端反射调用 protobuf 服务
+ZkClient：协程化 ZK 客户端，实现服务注册/发现
+
+
+核心创新点：将协程与 Epoll 结合，实现异步非阻塞 I/O；基于 Channel 的协程间通信替代回调地狱
+代码总计约 3300 行，异步IO框架性能测试协程版本与原生 epoll+非阻塞IO QPS 差距约 15%。但是代码量减少了50%，相当于牺牲了部分性能，换取代码易用性
+想请教老师，这个工作量是否满足毕业设计要求？还需要补充哪些内容？

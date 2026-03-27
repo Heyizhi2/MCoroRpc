@@ -13,6 +13,8 @@
 #include <atomic>
 #include <functional>
 #include "zkclient.hpp"
+#include "rpc_context.h"
+#include "../net/tcp/net_addr.h"
 #include "../coro/task.hpp"
 #include "../coro/channel.hpp"
 #include "../net/tcpservice.hpp"
@@ -52,10 +54,12 @@ public:
      * @brief 分发 RPC 请求
      * @param request TinyPB 协议格式的请求消息
      * @param response TinyPB 协议格式的响应消息
+     * @param ctx RPC 上下文
      * @details 解析请求中的完整方法名，调用对应的服务方法
      */
     void dispatch(std::shared_ptr<Coro::TinyPBProtocol> request, 
-                  std::shared_ptr<Coro::TinyPBProtocol> response);
+                  std::shared_ptr<Coro::TinyPBProtocol> response,
+                  RpcContext::s_ptr ctx = nullptr);
 
     /**
      * @brief 获取所有已注册服务

@@ -5,6 +5,7 @@
  */
 
 #include "../include/coro.hpp"
+#include "../include/net/tcp/net_addr.h"
 
 namespace Coro {
 namespace net {
@@ -155,6 +156,19 @@ Task<TcpStream::buffer_type> TcpStream::read_until_eof() {
     buffer_type buf;
     m_read_buffer->readFromBuffer(buf, m_read_buffer->readAble());
     co_return buf;
+}
+
+/**
+ * @brief 获取对端地址
+ */
+NetAddr::s_ptr TcpStream::peerAddr() const {
+    if (m_fd < 0) return nullptr;
+    sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    if (getpeername(m_fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0) {
+        return std::make_shared<IPNetAddr>(addr);
+    }
+    return nullptr;
 }
 
 }
