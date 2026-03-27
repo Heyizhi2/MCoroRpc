@@ -14,7 +14,7 @@
 #include "../coro/task.hpp"
 #include "../coro/channel.hpp"
 
-namespace AlphaMin {
+namespace Coro {
 
 /**
  * @brief ZooKeeper 操作结果封装

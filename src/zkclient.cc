@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-26 14:26:04
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-26 17:39:11
+ * @LastEditTime: 2026-03-26 20:46:59
  * @FilePath: /MCoroRpc/src/zkclient.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -11,7 +11,7 @@
 #include <cstring>
 #include <algorithm>
 
-namespace AlphaMin {
+namespace Coro {
 
 /**
  * @brief 全局 watcher 回调

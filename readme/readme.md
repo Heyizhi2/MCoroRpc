@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-26 20:15:23
+ * @LastEditTime: 2026-03-26 20:59:07
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -583,3 +583,10 @@ wait_for 在内部创建 wrapper 协程执行原始任务，通过 timer 实现�
 5. 原始 task 的 co_await 抛出异常，被 catch 捕获
 6. completed.store(true)
 7. wait_for 返回 result = {ok: false, is_timeout: true}
+
+建议补充（如果用于答辩）
+建议	原因
+增加对比实验数据	与原生 epoll、libgo 等对比性能/开发效率
+补充异常处理	网络断连、超时等边界情况处理
+完善文档	README 增加编译、运行示例
+添加压测脚本	方便验证性能数据

@@ -4,7 +4,7 @@
 #include <google/protobuf/message.h>
 #include <sstream>
 
-namespace AlphaMin {
+namespace Coro {
 
 // ==================== RpcDispatcher ====================
 

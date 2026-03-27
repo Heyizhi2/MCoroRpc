@@ -20,7 +20,7 @@
 #include "../coder/tinypb_protocol.hpp"
 #include "../coder/tinypb_coder.hpp"
 
-namespace AlphaMin {
+namespace Coro {
 
 /**
  * @brief RPC 服务信息结构
