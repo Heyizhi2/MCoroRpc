@@ -122,6 +122,14 @@ namespace Coro {
             Task<> writeFromBuffer();
 
             /**
+             * @brief 读取完整协议消息（协程）
+             * @param pk_len 输出：协议数据包长度
+             * @return Task<buffer_type> 完整的协议消息数据
+             * @details 先读取 5 字节获取 START 和 pk_len，再根据长度读取完整数据包
+             */
+            Task<buffer_type> readProtocolMessage(int32_t& pk_len);
+
+            /**
              * @brief 析构函数
              */
             ~TcpStream(){close();}

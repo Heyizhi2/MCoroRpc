@@ -22,6 +22,10 @@ bool IPNetAddr::isValid(const std::string& addr) {
     return true;
 }
 
+NetAddr::s_ptr IPNetAddr::Create(const std::string& ip, uint16_t port) {
+    return std::make_shared<IPNetAddr>(ip, port);
+}
+
 IPNetAddr::IPNetAddr(const std::string& ip, uint16_t port) 
     : m_ip(ip), m_port(port) {
     memset(&m_addr, 0, sizeof(m_addr));

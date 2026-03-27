@@ -1,7 +1,7 @@
 /*
- * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
+ * @Author: 来自火星的码农 15122322+heyizhi@user.noreply.gitee.com
  * @Date: 2026-03-16 09:50:30
- * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
+ * @LastEditors: 来自火星的码农 15122322+heyizhi@user.noreply.gitee.com
  * @LastEditTime: 2026-03-17 16:59:23
  * @FilePath: /MCoroRpc/src/event_loop.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
@@ -27,8 +27,8 @@ namespace Coro {
         m_wait_callback[wait_id]=make_warped_callback(wait_id,id,std::move(callback), coro);
         m_coro_waits[id].insert(wait_id);
         m_ready_queue.push(wait_id);
-        return wait_id;
-    }
+         return wait_id;
+     }
 
     /**
      * @brief 获取全局事件循环单例
@@ -67,9 +67,14 @@ namespace Coro {
             }
         }
 
-        process_epoll_event(timeout_ms);
-        process_expired_timeout();
         execute_ready_callback();
+        if (!m_ready_queue.empty()) {
+            timeout_ms = 0;
+        }
+
+        process_epoll_event(timeout_ms);
+        execute_ready_callback();
+        process_expired_timeout();
     }
 
     /**
@@ -155,14 +160,14 @@ namespace Coro {
      */
     Eventloop::WaitCallback Eventloop::make_warped_callback(uint64_t wait_id,Handle::ID coro_id,Callback cb, std::coroutine_handle<> coro){
         auto wrapped = [this,coro_id,wait_id,user_cb=std::move(cb)](){
-            user_cb();
-            auto it=m_coro_waits.find(coro_id);
-            if(it!=m_coro_waits.end()){
+            auto it = m_coro_waits.find(coro_id);
+            if(it != m_coro_waits.end()){
                 it->second.erase(wait_id);
                 if(it->second.empty()){
                     m_coro_waits.erase(it);
                 }
             }
+            if(user_cb) user_cb();
         };
         return WaitCallback{std::move(wrapped), coro};
     }

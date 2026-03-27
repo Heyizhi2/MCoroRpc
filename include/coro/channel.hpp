@@ -364,6 +364,32 @@ public:
     }
 
     /**
+     * @brief 同步发送数据（非协程）
+     * @param value 要发送的值
+     * @return true 发送成功, false Channel已关闭
+     * 
+     * 同步版本的send，适用于非协程环境
+     */
+    bool sendSync(T value) {
+        if (!isActive()) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!readers_.empty()) {
+            auto* reader = readers_.front();
+            readers_.pop_front();
+            reader->resumeWithValue(std::move(value));
+            return true;
+        }
+        if (buffer_.size() < capacity_) {
+            buffer_.push(std::move(value));
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * @brief 取消所有等待者
      */
     void cancelAllAwaiters() {

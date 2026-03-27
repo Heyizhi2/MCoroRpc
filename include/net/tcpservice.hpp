@@ -94,7 +94,6 @@ namespace Coro {
                     if (errno != EAGAIN && errno != EWOULDBLOCK) {
                         throw std::system_error(errno, std::generic_category(), "accept failed");
                     }
-                    // 否则继续循环
                 }
             }
 

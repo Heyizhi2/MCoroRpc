@@ -28,6 +28,7 @@ public:
 class IPNetAddr : public NetAddr {
 public:
     static bool isValid(const std::string& addr);
+    static NetAddr::s_ptr Create(const std::string& ip, uint16_t port);
 
     IPNetAddr() = default;
     IPNetAddr(const std::string& ip, uint16_t port);
@@ -39,6 +40,9 @@ public:
     int getFamily() const override;
     std::string toString() const override;
     bool isValid() const override;
+
+    std::string ip() const { return m_ip; }
+    uint16_t port() const { return m_port; }
 
 private:
     std::string m_ip;

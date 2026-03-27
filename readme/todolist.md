@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-26 15:57:16
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-26 18:02:39
+ * @LastEditTime: 2026-03-27 19:45:51
  * @FilePath: /MCoroRpc/readme/todolist.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -277,3 +277,59 @@ parseSucess → parseSuccess
 改进 ZooKeeper 注册路径以支持多实例；
 
 完善异常处理、资源管理和协程取消机制。
+
+
+
+1. 协议处理不完整
+固定读取 1024 字节，未处理 TCP 粘包/拆包，可能导致响应截断或解析失败。
+
+缺乏对长度前缀的解析，无法正确接收任意大小的响应。
+
+2. 并发安全缺失
+多个协程并发调用 CallMethod 时会共享同一个 TcpStream，读写操作交错，造成请求/响应数据错乱。
+
+无串行化机制（如锁或请求队列），无法保证请求与响应的顺序匹配。
+
+3. 无超时控制
+读写操作未设置超时，若服务端无响应，协程将永久阻塞，造成资源泄漏。
+
+控制器中的 SetTimeout 未被使用，超时功能形同虚设。
+
+4. 连接管理薄弱
+需用户手动调用 connect() 且等待完成，未提供自动连接或按需连接。
+
+连接断开后无重连机制，后续调用直接失败。
+
+5. 发送不完整风险
+write 可能只发送部分数据，未循环写入确保全部发送，存在数据丢失风险。
+
+6. 资源与生命周期问题
+close() 关闭流后，未通知等待中的协程，可能导致永久挂起。
+
+未实现优雅关闭，无法取消进行中的请求。
+
+7. 错误信息不详细
+仅提供简单错误文本，缺少错误码、操作上下文（如方法名、消息ID），不利于调试。
+
+
+
+检查 TcpService::accept() 返回后是否立即触发客户端连接
+检查 handleClient 中的 readToBuffer() 何时被唤醒
+验证 channel 发送后 workerLoop 的协程调度
+
+Echo Server/Client 测试通过 ✅
+TCP 连接、读写正常
+send/recv 正常工作
+RPC 问题在协程调度：
+
+Provider 的 handleClient 没有被正确调度
+Channel 的 workerLoop 没有收到 channel 中的请求
+这属于协程调度层面的问题，不影响网络基础功能。
+
+
+服务已经成功接收并处理了请求！显示 [Server] Received: 10 + 20 = 30
+
+但客户端无法解码响应。问题在于客户端读取响应时 read buffer 为空 (readable=0)，说明读取没有等待服务器响应。
+
+
+还是handle_client的处理问题，应该使用chanenl的mp多生产者/多消费者模式，start生产stream,handle_client消费stream;

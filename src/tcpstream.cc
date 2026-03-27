@@ -6,6 +6,8 @@
 
 #include "../include/coro.hpp"
 #include "../include/net/tcp/net_addr.h"
+#include "../include/utils/utils.hpp"
+#include "../include/coder/tinypb_protocol.hpp"
 
 namespace Coro {
 namespace net {
@@ -78,7 +80,7 @@ Task<TcpStream::buffer_type> TcpStream::read(ssize_t size) {
 
 /**
  * @brief 读取数据到内部缓冲区
- * @return 协程Task，返回读取的总字节数
+ * @return Task<ssize_t> 读取的总字节数
  * @details 使用 epoll 异步等待数据，直到无数据可读
  */
 Task<ssize_t> TcpStream::readToBuffer() {
@@ -96,16 +98,22 @@ Task<ssize_t> TcpStream::readToBuffer() {
         if (n > 0) {
             m_read_buffer->writeToBuffer(tmp, n);
             total += n;
+            printf("[TcpStream] readToBuffer: read %ld bytes, total=%ld\n", (long)n, (long)total);
         } else if (n == 0) {
+            printf("[TcpStream] readToBuffer: connection closed (n=0)\n");
             break;
         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
             if (total > 0) break;
             co_await ReadAwaiter{m_fd};
+        } else if (errno == ECONNRESET) {
+            if (total > 0) break;
+            co_return 0;
         } else {
             throw std::system_error(errno, std::generic_category(), "read failed");
         }
     }
 
+    printf("[TcpStream] readToBuffer: returning total=%ld\n", (long)total);
     co_return total;
 }
 
@@ -131,6 +139,7 @@ Task<> TcpStream::writeFromBuffer() {
             m_write_buffer->m_buffer.data() + m_write_buffer->readIndex(), 
             m_write_buffer->readAble(), 0);
         
+        printf("[TcpStream] writeFromBuffer: send returned %ld, errno=%d\n", (long)n, errno);
         if (n > 0) {
             m_write_buffer->moveReadIndex(n);
         } else if (n == 0) {
@@ -143,6 +152,7 @@ Task<> TcpStream::writeFromBuffer() {
             throw std::system_error(errno, std::generic_category(), "write failed");
         }
     }
+    printf("[TcpStream] writeFromBuffer: done, write_buffer readable=0\n");
     co_return;
 }
 
@@ -156,6 +166,50 @@ Task<TcpStream::buffer_type> TcpStream::read_until_eof() {
     buffer_type buf;
     m_read_buffer->readFromBuffer(buf, m_read_buffer->readAble());
     co_return buf;
+}
+
+/**
+ * @brief 读取完整协议消息（协程）
+ * @param pk_len 输出：协议数据包长度
+ * @return Task<buffer_type> 完整的协议消息数据
+ * @details 先读取 5 字节获取 START 和 pk_len，再根据长度读取完整数据包
+ */
+Task<TcpStream::buffer_type> TcpStream::readProtocolMessage(int32_t& pk_len) {
+    pk_len = 0;
+
+    while (true) {
+        int readable = static_cast<int>(m_read_buffer->readAble());
+        if (readable < 5) {
+            co_await readToBuffer();
+            continue;
+        }
+
+        char first_byte = m_read_buffer->m_buffer[m_read_buffer->readIndex()];
+
+        if (first_byte != TinyPBProtocol::PB_START) {
+            m_read_buffer->moveReadIndex(1);
+            continue;
+        }
+
+        int32_t pk = getInt32FromNetByte(&m_read_buffer->m_buffer[m_read_buffer->readIndex() + 1]);
+        pk_len = pk;
+
+        int total_len = 1 + 4 + pk_len;
+
+        while (m_read_buffer->readAble() < total_len) {
+            co_await readToBuffer();
+        }
+
+        buffer_type result;
+        result.reserve(total_len);
+        result.insert(result.end(), 
+            m_read_buffer->m_buffer.begin() + m_read_buffer->readIndex(),
+            m_read_buffer->m_buffer.begin() + m_read_buffer->readIndex() + total_len);
+        
+        m_read_buffer->moveReadIndex(total_len);
+
+        co_return result;
+    }
 }
 
 /**

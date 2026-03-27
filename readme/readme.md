@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-27 14:50:49
+ * @LastEditTime: 2026-03-27 19:08:36
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -619,3 +619,10 @@ ZkClient：协程化 ZK 客户端，实现服务注册/发现
 核心创新点：将协程与 Epoll 结合，实现异步非阻塞 I/O；基于 Channel 的协程间通信替代回调地狱
 代码总计约 3300 行，异步IO框架性能测试协程版本与原生 epoll+非阻塞IO QPS 差距约 15%。但是代码量减少了50%，相当于牺牲了部分性能，换取代码易用性
 想请教老师，这个工作量是否满足毕业设计要求？还需要补充哪些内容？
+
+
+
+问题在于：使用 co_await 后，accept() 返回了但 handleClient 没有真正执行。这是因为协程调度的问题。
+
+让我先清理 debug 代码，然后尝试另一种方法 - 让 Provider 的 handleClient 也在独立的协程中运行，但是使用正确的调度方式：
+Provider 处理：使用 co_await handleClient() 而不是 schedule() 来确保正确执行

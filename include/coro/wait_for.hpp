@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <atomic>
 #include <memory>
+#include <type_traits>
 
 namespace Coro {
 
@@ -42,7 +43,6 @@ struct WaitForResult<void> {
 template<typename T>
 auto wait_for(Task<T> task, std::chrono::milliseconds timeout) -> Task<WaitForResult<T>> {
     WaitForResult<T> result;
-    std::exception_ptr error;
     std::atomic<bool> timeout_flag{false};
     std::atomic<bool> completed{false};
     
@@ -58,10 +58,14 @@ auto wait_for(Task<T> task, std::chrono::milliseconds timeout) -> Task<WaitForRe
     timeout_task().schedule();
     
     try {
-        result.value = co_await task;
+        if constexpr (std::is_void_v<T>) {
+            co_await task;
+        } else {
+            result.value = co_await task;
+        }
         result.ok = true;
     } catch (...) {
-        error = std::current_exception();
+        // error
     }
     
     completed.store(true);

@@ -10,6 +10,8 @@ find_package(Catch2 REQUIRED)
 find_package(Protobuf REQUIRED)
 find_library(ZOOKEEPER_LIBRARY NAMES zookeeper_mt zookeeper REQUIRED)
 
+add_subdirectory(third_part/nanobench)
+
 # Set protobuf targets if not available
 if(TARGET protobuf::libprotobuf)
   set(PROTOBUF_TARGET protobuf::libprotobuf)
@@ -90,3 +92,18 @@ target_link_libraries(test_rpc_dispatcher PRIVATE CoroRpc Catch2::Catch2WithMain
 
 add_executable(test_tcpstream tests/test_tcpstream.cc)
 target_link_libraries(test_tcpstream PRIVATE CoroRpc Catch2::Catch2WithMain)
+
+add_executable(benchmark_sched tests/benchmark_sched.cc)
+target_link_libraries(benchmark_sched PRIVATE CoroRpc nanobench)
+
+add_executable(rpc_server tests/rpc_test/rpc_server.cc tests/rpc_test/calc.pb.cc)
+target_link_libraries(rpc_server PRIVATE CoroRpc)
+
+add_executable(rpc_client tests/rpc_test/rpc_client.cc tests/rpc_test/calc.pb.cc)
+target_link_libraries(rpc_client PRIVATE CoroRpc)
+
+add_executable(echo_test_server tests/rpc_test/echo_test_server.cc)
+target_link_libraries(echo_test_server PRIVATE CoroRpc)
+
+add_executable(echo_test_client tests/rpc_test/echo_test_client.cc)
+target_link_libraries(echo_test_client PRIVATE CoroRpc)
