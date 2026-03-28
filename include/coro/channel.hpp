@@ -378,7 +378,7 @@ public:
 
         std::lock_guard<std::mutex> lock(mutex_);
         
-        // 有等待的读者，直接传递值并唤醒
+        // 有等待的读者，直接传递值并恢复协程
         if (!readers_.empty()) {
             auto* reader = readers_.front();
             readers_.pop_front();

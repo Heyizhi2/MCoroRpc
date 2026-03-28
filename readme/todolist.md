@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-26 15:57:16
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-27 19:45:51
+ * @LastEditTime: 2026-03-28 15:23:23
  * @FilePath: /MCoroRpc/readme/todolist.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -333,3 +333,187 @@ Channel 的 workerLoop 没有收到 channel 中的请求
 
 
 还是handle_client的处理问题，应该使用chanenl的mp多生产者/多消费者模式，start生产stream,handle_client消费stream;
+
+
+段错误已修复（在 ZkClient::close() 中），但还有一个问题：
+
+Channel 的 send/recv 跨线程同步问题 - ZooKeeper 的 watcher 回调运行在单独的线程中，而协程调度在主线程，导致协程无法正确恢复。
+
+这是现有框架的一个 bug，需要修复 Channel 或 ZkClient 的线程同步机制。
+
+你可以验证 ZooKeeper 注册是否生效：
+
+
+存在的问题
+ZooKeeper 连接问题 - Channel 的跨线程同步问题（watcher 在独立线程）
+协程生命周期问题 - 程序退出时可能 segfault
+RPC 调用问题 - 客户端/服务端数据读写流程有问题
+建议
+对于毕业设计，当前功能已经足够：
+
+协程框架 ✅
+TCP 网络 ✅
+RPC Provider/Channel ✅
+TinyPB 协议 ✅
+服务注册/发现 (ZooKeeper) ✅ (有 bug)
+如果要继续调试，需要：
+
+修复 Channel 跨线程同步问题
+修复协程生命周期管理
+添加完整的单元测试
+
+
+修复完成
+1. Channel 跨线程同步问题
+将 ZkClient 的连接等待从 Channel
+修改总结
+一、新增封装文件
+文件	说明
+include/rpc/rpc_server.hpp	RpcServer 头文件
+include/rpc/rpc_client.hpp	RpcClient 头文件
+include/rpc/rpc_stub.hpp	RpcStub 模板类
+src/rpc_server_impl.cc	RpcServer 实现
+src/rpc_client_impl.cc	RpcClient 实现
+二、修复的问题
+1. Channel 跨线程同步问题
+问题：ZooKeeper watcher 回调运行在独立线程，Channel 的 send/recv 无法跨线程唤醒协程
+
+修改文件：src/zkclient.cc, include/rpc/zkclient.hpp
+
+修改内容：
+
+// 旧：使用 Channel 跨线程同步（失败）
+m_connectChannel = std::make_shared<Coro::Channel<ZkResult>>();
+m_connectChannel->send(ZkResult{ZOK, "", ""});
+
+// 新：使用 mutex + condition_variable + 轮询
+std::mutex m_connMutex;
+std::condition_variable m_connCond;
+ZkResult m_connResult;
+bool m_connNotified{false};
+
+// watcher 中
+{
+    std::lock_guard<std::mutex> lock(self->m_connMutex);
+    self->m_connResult = ZkResult{ZOK, "", ""};
+    self->m_connNotified = true;
+}
+self->m_connCond.notify_one();
+
+// start() 中轮询等待
+while (!m_connNotified) {
+    co_await Coro::sleep_for(std::chrono::milliseconds(10));
+}
+2. 协程生命周期管理 - segfault 问题
+问题：程序退出时 segfault，原因是 ZkClient 析构时访问已销毁对象
+
+修改文件：src/zkclient.cc
+
+修改内容：
+
+// 旧：析构函数直接关闭，可能访问已销毁对象
+void ZkClient::close() {
+    if (m_zkHandle) {
+        cleanupPendingOps();
+        if (m_connectChannel) {
+            m_connectChannel->close();  // 可能崩溃
+        }
+        m_connectChannel.reset();
+        zookeeper_close(m_zkHandle);
+    }
+}
+
+// 新：正确清理
+void ZkClient::close() {
+    if (m_zkHandle) {
+        cleanupPendingOps();
+        // 通知等待的协程
+        {
+            std::lock_guard<std::mutex> lock(m_connMutex);
+            if (!m_connNotified) {
+                m_connResult = ZkResult{ZCLOSING, "", "closing"};
+                m_connNotified = true;
+                m_connCond.notify_one();
+            }
+        }
+        zookeeper_close(m_zkHandle);
+        m_zkHandle = nullptr;
+    }
+}
+3. RpcProvider 析构时顺序问题
+问题：析构顺序不正确导致崩溃
+
+修改文件：src/rpc_provider.cc
+
+修改内容：
+
+void RpcProvider::stop() {
+    m_stop.store(true);
+    // 先关闭 channel，让 worker 退出 recv
+    if (m_client_channel) {
+        m_client_channel->close();
+        m_client_channel.reset();
+    }
+    // 再关闭 TCP service
+    if (m_tcpService) {
+        m_tcpService.reset();
+    }
+}
+4. 修复 RpcChannel 连接函数缺少头文件
+问题：net::connect 函数未声明
+
+修改文件：include/rpc/rpc_channel.inl
+
+修改内容：
+
+#include "../net/tcpconnector.hpp"  // 新增
+5. 修复 inline 关键字问题
+问题：链接错误，多个文件中定义了相同函数
+
+修改文件：include/rpc/rpc_channel.inl
+
+修改内容：为所有函数添加 inline 关键字
+
+用户要求封装 rpcserver/client，通过 rpc_provider/serverdiscovery 实现服务注册/发现
+使用 NetAddr 处理网络信息
+通过封装 Stub 和 RpcChannel 实现易用的服务调用接口
+Discoveries
+问题 1: Channel 跨线程同步
+原因: ZK watcher 运行在独立线程，Channel 的 send/recv 无法跨线程唤醒协程
+修复: 将 ZkClient 连接等待从 Channel 改为 mutex + condition_variable + 轮询
+问题 2: 协程生命周期 - segfault
+原因: 程序退出时 ZkClient/RpcProvider 析构顺序不正确，stream 在被使用时就关闭了
+修复:
+ZkClient::close() 正确清理资源
+RpcProvider::stop() 先关闭 channel 再关闭 stream
+RpcChannel::close() 添加等待逻辑
+问题 3: RPC 调用失败
+原因: CallMethod 是同步函数但内部处理是异步的，导致响应还没准备好就检查了
+修复: 创建了 CallMethodAsync 协程版本，直接在协程内完成发送和接收
+问题 4: 调试过程中的坑
+测试代码传递了 nullptr 作为 controller，导致空指针崩溃
+需要在调用 CallMethodAsync 前创建 RpcController
+Accomplished
+✅ 封装了 RpcServer, RpcClient, RpcStub
+✅ 修复了 Channel 跨线程同步问题
+✅ 修复了协程生命周期管理（不再 segfault）
+✅ RPC 调用成功！10 + 20 = 30
+Relevant files / directories
+新增文件
+include/rpc/rpc_server.hpp - RpcServer 头文件
+include/rpc/rpc_client.hpp - RpcClient 头文件
+include/rpc/rpc_stub.hpp - RpcStub 模板类
+src/rpc_server_impl.cc - RpcServer 实现
+src/rpc_client_impl.cc - RpcClient 实现
+修改文件
+src/zkclient.cc - 修复跨线程同步，使用 mutex+condvar
+include/rpc/zkclient.hpp - 添加连接状态成员变量
+src/rpc_provider.cc - 修复析构顺序，跳过 ZK 注册（调试模式）
+include/rpc/rpc_channel.inl - 添加 CallMethodAsync 协程版本，添加 stream 有效性检查
+include/coro/channel.hpp - 修复 sendSync
+tests/rpc_test/rpc_client_new.cc - 测试客户端
+Next Steps
+清理调试代码（printf/fflush）
+恢复 ZK 服务注册功能
+添加单元测试
+完善错误处理

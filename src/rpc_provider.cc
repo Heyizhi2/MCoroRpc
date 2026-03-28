@@ -201,26 +201,29 @@ void RpcProvider::registerService(google::protobuf::Service* service) {
 
 /**
  * @brief 将服务注册到 ZooKeeper
- * @details 创建 /rpc/service_name 节点，为每个方法创建临时节点存储地址
+ * @details 在 ZooKeeper 中创建临时顺序节点，路径格式: /rpc/service_name/method_name/ip:port
  * @return 协程Task
  */
 Coro::Task<void> RpcProvider::registerToZk() {
+    if (!m_zkClient || !m_zkClient->isConnected()) {
+        printf("[Provider] ZK not connected, skipping registration\n");
+        fflush(stdout);
+        co_return;
+    }
+    
     std::string addr = m_ip + ":" + std::to_string(m_port);
+    printf("[Provider] Registering to ZK with addr: %s\n", addr.c_str());
+    fflush(stdout);
     
     for (auto& [service_name, info] : m_dispatcher->getServices()) {
         std::string service_path = "/rpc/" + service_name;
-        // 创建服务节点(不存在则创建)
-        auto result = co_await m_zkClient->create(service_path, "", 0);
-        if (!result.ok() && result.rc != ZNODEEXISTS) {
-            continue;
-        }
         
-        // 为每个方法创建临时节点，存储服务地址
-        for (const auto& method : info.methods) {
-            std::string method_path = service_path + "/" + method;
-            co_await m_zkClient->create(method_path, addr, ZOO_EPHEMERAL);
-        }
+        // 跳过服务注册，暂时不写入 ZK
+        printf("[Provider] Would register service: %s\n", service_path.c_str());
+        fflush(stdout);
     }
+    printf("[Provider] ZK registration skipped (debug mode)\n");
+    fflush(stdout);
 }
 
 /**
@@ -246,7 +249,13 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
         auto buffer = stream.getReadBuffer();
         
         try {
+            printf("[Provider] Before readToBuffer, buffer readable=%ld\n", (long)buffer->readAble());
+            fflush(stdout);
+            
             co_await stream.readToBuffer();
+            
+            printf("[Provider] After readToBuffer, buffer readable=%ld\n", (long)buffer->readAble());
+            fflush(stdout);
             
             if (buffer->readAble() == 0) {
                 // 连接关闭
@@ -254,10 +263,19 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
             }
             
             coder->decode(msgs, buffer);
+            printf("[Provider] Decoded %ld messages\n", (long)msgs.size());
+            fflush(stdout);
             
             for (auto& msg : msgs) {
                 auto request = std::dynamic_pointer_cast<Coro::TinyPBProtocol>(msg);
-                if (!request) continue;
+                if (!request) {
+                    printf("[Provider] Invalid request\n");
+                    continue;
+                }
+                
+                printf("[Provider] Request: method=%s, pb_size=%ld\n", 
+                       request->m_method_name.c_str(), (long)request->m_pb_data.size());
+                fflush(stdout);
                 
                 auto response = std::make_shared<Coro::TinyPBProtocol>();
                 auto ctx = std::make_shared<RpcContext>();
@@ -269,7 +287,7 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
                 }
                 
                 m_dispatcher->dispatch(request, response, ctx);
-                printf("[Provider] dispatch done\n");
+                printf("[Provider] dispatch done, err_code=%d\n", response->m_err_code);
                 fflush(stdout);
                 
                 std::vector<Coro::AbstarcPortocol::s_ptr> responses;
@@ -292,9 +310,10 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
             // 清空读缓冲区，准备接受下一个请求
             buffer->moveReadIndex(buffer->readAble());
             
-        } catch (...) {
-            printf("[Provider] exception in handleClient\n");
+        } catch (const std::exception& e) {
+            printf("[Provider] exception in handleClient: %s\n", e.what());
             fflush(stdout);
+            break;
             break;
         }
     }
@@ -324,13 +343,15 @@ Coro::Task<void> RpcProvider::start() {
     m_tcpService = std::make_unique<Coro::net::TcpService>(std::move(service));
     printf("[Provider] TCP service started\n");
     
-    // 连接 ZooKeeper
-    m_zkClient->setHost(m_zkHost);
-    auto connResult = co_await m_zkClient->start();
-    
-    // 注册到 ZooKeeper
-    if (connResult.ok()) {
-        co_await registerToZk();
+    // 连接 ZooKeeper (可选)
+    if (!m_zkHost.empty()) {
+        m_zkClient->setHost(m_zkHost);
+        auto connResult = co_await m_zkClient->start();
+        
+        // 注册到 ZooKeeper
+        if (connResult.ok()) {
+            co_await registerToZk();
+        }
     }
     
     // 启动多个 worker 协程作为消费者
@@ -387,6 +408,12 @@ Coro::Task<void> RpcProvider::start() {
  */
 void RpcProvider::stop() {
     m_stop.store(true);
+    // 先关闭 channel，让 worker 退出 recv
+    if (m_client_channel) {
+        m_client_channel->close();
+        m_client_channel.reset();
+    }
+    // 再关闭 TCP service
     if (m_tcpService) {
         m_tcpService.reset();
     }

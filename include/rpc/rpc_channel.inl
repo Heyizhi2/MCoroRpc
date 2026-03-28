@@ -8,10 +8,11 @@
 #include "../coder/tinypb_coder.hpp"
 #include "../coro/wait_for.hpp"
 #include "../coro/sleep.hpp"
+#include "../net/tcpconnector.hpp"
 
 namespace Coro {
 
-void RpcController::Reset() {
+inline void RpcController::Reset() {
     m_failed = false;
     m_error_text.clear();
     m_error_code = 0;
@@ -19,32 +20,32 @@ void RpcController::Reset() {
     m_finished = false;
 }
 
-bool RpcController::Failed() const {
+inline bool RpcController::Failed() const {
     return m_failed;
 }
 
-std::string RpcController::ErrorText() const {
+inline std::string RpcController::ErrorText() const {
     return m_error_text;
 }
 
-void RpcController::SetFailed(const std::string& reason) {
+inline void RpcController::SetFailed(const std::string& reason) {
     m_failed = true;
     m_error_text = reason;
 }
 
-int RpcController::ErrorCode() const {
+inline int RpcController::ErrorCode() const {
     return m_error_code;
 }
 
-void RpcController::SetErrorCode(int err_code) {
+inline void RpcController::SetErrorCode(int err_code) {
     m_error_code = err_code;
 }
 
-bool RpcController::IsCanceled() const {
+inline bool RpcController::IsCanceled() const {
     return m_canceled;
 }
 
-void RpcController::StartCancel() {
+inline void RpcController::StartCancel() {
     m_canceled = true;
     if (m_cancel_callback) {
         m_cancel_callback->Run();
@@ -52,49 +53,49 @@ void RpcController::StartCancel() {
     }
 }
 
-void RpcController::NotifyOnCancel(google::protobuf::Closure* callback) {
+inline void RpcController::NotifyOnCancel(google::protobuf::Closure* callback) {
     m_cancel_callback = callback;
 }
 
-void RpcController::SetTimeout(int timeout_ms) {
+inline void RpcController::SetTimeout(int timeout_ms) {
     m_timeout_ms = timeout_ms;
 }
 
-int RpcController::GetTimeout() const {
+inline int RpcController::GetTimeout() const {
     return m_timeout_ms;
 }
 
-void RpcController::SetMsgId(const std::string& msg_id) {
+inline void RpcController::SetMsgId(const std::string& msg_id) {
     m_msg_id = msg_id;
 }
 
-std::string RpcController::GetMsgId() const {
+inline std::string RpcController::GetMsgId() const {
     return m_msg_id;
 }
 
-void RpcController::SetFinished(bool finished) {
+inline void RpcController::SetFinished(bool finished) {
     m_finished = finished;
 }
 
-bool RpcController::Finished() const {
+inline bool RpcController::Finished() const {
     return m_finished;
 }
 
-RpcChannel::RpcChannel(const std::string& host, int port)
+inline RpcChannel::RpcChannel(const std::string& host, int port)
     : m_addr(net::IPNetAddr::Create(host, port)),
       m_request_chan(std::make_shared<Channel<RpcRequest>>(100)) {
 }
 
-RpcChannel::RpcChannel(const net::NetAddr::s_ptr& addr)
+inline RpcChannel::RpcChannel(const net::NetAddr::s_ptr& addr)
     : m_addr(addr),
       m_request_chan(std::make_shared<Channel<RpcRequest>>(100)) {
 }
 
-RpcChannel::~RpcChannel() {
+inline RpcChannel::~RpcChannel() {
     close();
 }
 
-Task<void> RpcChannel::connect() {
+inline Task<void> RpcChannel::connect() {
     if (m_connected.load()) {
         co_return;
     }
@@ -121,7 +122,7 @@ Task<void> RpcChannel::connect() {
     co_return;
 }
 
-Task<void> RpcChannel::reconnect() {
+inline Task<void> RpcChannel::reconnect() {
     if (m_stopped.load()) {
         co_return;
     }
@@ -156,25 +157,46 @@ Task<void> RpcChannel::reconnect() {
     m_request_chan->cancelAllAwaiters();
 }
 
-void RpcChannel::close() {
+inline void RpcChannel::close() {
+    printf("[Channel] close() called\n");
+    fflush(stdout);
+    
+    // 1. 先停止接收新请求
     m_stopped.store(true);
+    
+    // 2. 关闭 channel 唤醒 worker（从 recv 中唤醒）
     if (m_request_chan) {
         m_request_chan->close();
     }
+    
+    // 3. 等待 worker 完成当前操作
+    // 这里简单等待一小段时间让 worker 退出
+    int wait_count = 0;
+    while (m_worker_running.load() && wait_count < 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        wait_count++;
+    }
+    printf("[Channel] close() waited %d iterations\n", wait_count);
+    fflush(stdout);
+    
+    // 4. 最后关闭 stream
     if (m_stream && m_stream->fd() >= 0) {
+        printf("[Channel] close stream\n");
+        fflush(stdout);
         m_stream->close();
         m_stream.reset();
     }
     m_connected.store(false);
-    m_worker_running.store(false);
+    printf("[Channel] close() done\n");
+    fflush(stdout);
 }
 
-void notifyRequestFailed(RpcRequest& req, const std::string& error) {
+inline void notifyRequestFailed(RpcRequest& req, const std::string& error) {
     req.controller->SetFailed(error);
     if (req.done) req.done->Run();
 }
 
-Task<void> RpcChannel::workerLoop() {
+inline Task<void> RpcChannel::workerLoop() {
     auto channel = shared_from_this();
         printf("[Channel] workerLoop started\n");
         fflush(stdout);
@@ -210,6 +232,14 @@ Task<void> RpcChannel::workerLoop() {
         
         int timeout_ms = req.controller->GetTimeout();
         
+        // 检查 stream 是否有效
+        if (!m_stream || m_stream->fd() < 0) {
+            printf("[Channel] stream not valid, skipping\n");
+            fflush(stdout);
+            notifyRequestFailed(req, "connection closed");
+            continue;
+        }
+        
         std::vector<AbstarcPortocol::s_ptr> req_msgs;
         req_msgs.push_back(req.req);
         
@@ -220,19 +250,22 @@ Task<void> RpcChannel::workerLoop() {
         std::vector<char> data(out_buf->m_buffer.begin() + out_buf->readIndex(),
                                out_buf->m_buffer.begin() + out_buf->writeIndex());
         
-            printf("[Channel] About to write %ld bytes\n", data.size());
+            printf("[Channel] About to write %ld bytes, fd=%d\n", (long)data.size(), m_stream->fd());
             fflush(stdout);
             
             try {
                 auto write_task = m_stream->write(data);
+                printf("[Channel] Before write await...\n");
+                fflush(stdout);
                 auto write_result = co_await wait_for(std::move(write_task), std::chrono::milliseconds(timeout_ms));
                 printf("[Channel] write_result ok=%d, timeout=%d\n", write_result.ok, write_result.is_timeout);
+                fflush(stdout);
                 
                 if (!write_result.ok) {
-                m_connected.store(false);
-                notifyRequestFailed(req, "rpc write error");
-                continue;
-            }
+                    m_connected.store(false);
+                    notifyRequestFailed(req, "rpc write error");
+                    continue;
+                }
             
             if (write_result.is_timeout) {
                 m_connected.store(false);
@@ -244,12 +277,31 @@ Task<void> RpcChannel::workerLoop() {
                 continue;
             }
             
+            printf("[Channel] Write done, waiting for response...\n");
+            fflush(stdout);
+            
             auto read_task = m_stream->readToBuffer();
             printf("[Channel] before wait_for read...\n");
             fflush(stdout);
             auto read_result = co_await wait_for(std::move(read_task), std::chrono::milliseconds(timeout_ms));
-            printf("[Channel] wait_for read returned, ok=%d, timeout=%d\n", read_result.ok, read_result.is_timeout);
+            printf("[Channel] wait_for read returned, ok=%d, timeout=%d, readable=%ld\n", 
+                   read_result.ok, read_result.is_timeout, (long)m_stream->getReadBuffer()->readAble());
             fflush(stdout);
+            
+            if (read_result.ok && !read_result.is_timeout && m_stream->getReadBuffer()->readAble() > 0) {
+                auto in_buf = m_stream->getReadBuffer();
+                std::vector<AbstarcPortocol::s_ptr> rsp_msgs;
+                printf("[Channel] About to decode response...\n");
+                fflush(stdout);
+                coder.decode(rsp_msgs, in_buf);
+                printf("[Channel] Decoded %ld response messages\n", (long)rsp_msgs.size());
+                fflush(stdout);
+            } else {
+                printf("[Channel] Read result not ready: ok=%d, timeout=%d, readable=%ld\n",
+                       read_result.ok, read_result.is_timeout, 
+                       (long)(m_stream ? m_stream->getReadBuffer()->readAble() : -1));
+                fflush(stdout);
+            }
             
             if (!read_result.ok) {
                 m_connected.store(false);
@@ -325,7 +377,7 @@ Task<void> RpcChannel::workerLoop() {
     m_worker_running.store(false);
 }
 
-void RpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
+inline void RpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
                             google::protobuf::RpcController* controller,
                             const google::protobuf::Message* request,
                             google::protobuf::Message* response,
@@ -362,12 +414,107 @@ void RpcChannel::CallMethod(const google::protobuf::MethodDescriptor* method,
     rpc_req.controller = ctrl;
     rpc_req.done = done;
 
-    m_request_chan->sendSync(std::move(rpc_req));
-    printf("[Channel] Sent request to channel (sync)\n");
-    fflush(stdout);
+    if (!m_request_chan->sendSync(std::move(rpc_req))) {
+        ctrl->SetFailed("channel closed");
+        if (done) done->Run();
+        return;
+    }
 }
 
-void RpcChannel::initController(google::protobuf::RpcController* controller) {
+inline Task<void> RpcChannel::CallMethodAsync(
+    const google::protobuf::MethodDescriptor* method,
+    google::protobuf::RpcController* controller,
+    const google::protobuf::Message* request,
+    google::protobuf::Message* response,
+    google::protobuf::Closure* done) {
+    
+    initController(controller);
+    
+    auto* ctrl = dynamic_cast<RpcController*>(controller);
+    if (!ctrl) {
+        co_return;
+    }
+    
+    if (!m_connected.load() || !m_stream || m_stream->fd() < 0) {
+        ctrl->SetFailed("not connected");
+        if (done) done->Run();
+        co_return;
+    }
+    
+    auto req = std::make_shared<TinyPBProtocol>();
+    req->m_method_name = method->full_name();
+    req->m_msg_id = ctrl->GetMsgId();
+    
+    if (!request->SerializeToString(&req->m_pb_data)) {
+        ctrl->SetFailed("serialize request failed");
+        if (done) done->Run();
+        co_return;
+    }
+    
+    // 直接发送和接收，不经过 workerLoop
+    printf("[Channel] CallMethodAsync: m_stream=%p, fd=%d\n", m_stream.get(), m_stream ? m_stream->fd() : -1);
+    fflush(stdout);
+    
+    TinyPBCoder coder;
+    std::vector<AbstarcPortocol::s_ptr> req_msgs;
+    req_msgs.push_back(req);
+    
+    auto out_buf = std::make_shared<net::TcpBuffer>(1024);
+    coder.encode(req_msgs, out_buf);
+    
+    std::vector<char> data(out_buf->m_buffer.begin() + out_buf->readIndex(),
+                           out_buf->m_buffer.begin() + out_buf->writeIndex());
+    
+    printf("[Channel] About to write %ld bytes, fd=%d\n", (long)data.size(), m_stream->fd());
+    fflush(stdout);
+    
+    // 写入数据
+    auto writeTask = m_stream->write(data);
+    printf("[Channel] Before co_await write\n");
+    fflush(stdout);
+    co_await writeTask;
+    printf("[Channel] Write done, readable=%ld\n", (long)m_stream->getReadBuffer()->readAble());
+    fflush(stdout);
+    
+    // 读取响应
+    printf("[Channel] Before readToBuffer...\n");
+    fflush(stdout);
+    co_await m_stream->readToBuffer();
+    printf("[Channel] After readToBuffer, readable=%ld\n", (long)m_stream->getReadBuffer()->readAble());
+    fflush(stdout);
+    
+    auto in_buf = m_stream->getReadBuffer();
+    std::vector<AbstarcPortocol::s_ptr> rsp_msgs;
+    printf("[Channel] About to decode...\n");
+    fflush(stdout);
+    coder.decode(rsp_msgs, in_buf);
+    printf("[Channel] Decoded %ld messages\n", (long)rsp_msgs.size());
+    
+    if (rsp_msgs.empty()) {
+        ctrl->SetFailed("decode response failed");
+        if (done) done->Run();
+        co_return;
+    }
+    
+    auto rsp = std::dynamic_pointer_cast<TinyPBProtocol>(rsp_msgs[0]);
+    if (!rsp) {
+        ctrl->SetFailed("invalid response");
+        if (done) done->Run();
+        co_return;
+    }
+    
+    if (rsp->m_err_code != 0) {
+        ctrl->SetErrorCode(rsp->m_err_code);
+        ctrl->SetFailed(rsp->m_err_info);
+    } else {
+        response->ParseFromString(rsp->m_pb_data);
+    }
+    
+    ctrl->SetFinished(true);
+    if (done) done->Run();
+}
+
+inline void RpcChannel::initController(google::protobuf::RpcController* controller) {
     if (!controller) return;
     auto* ctrl = dynamic_cast<RpcController*>(controller);
     if (ctrl) {
@@ -377,11 +524,11 @@ void RpcChannel::initController(google::protobuf::RpcController* controller) {
     }
 }
 
-void RpcChannel::doneCallback(google::protobuf::Closure* done, RpcController* ctrl) {
+inline void RpcChannel::doneCallback(google::protobuf::Closure* done, RpcController* ctrl) {
     if (done) done->Run();
 }
 
-void RpcChannel::setTimeout(int timeout_ms) {
+inline void RpcChannel::setTimeout(int timeout_ms) {
     m_timeout_ms = timeout_ms;
 }
 

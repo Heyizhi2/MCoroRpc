@@ -11,6 +11,7 @@
 #include <vector>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 #include "../coro/task.hpp"
 #include "../coro/channel.hpp"
 
@@ -206,7 +207,11 @@ private:
     zhandle_t* m_zkHandle = nullptr;                    ///< ZooKeeper句柄
     std::atomic<bool> m_connected{false};               ///< 连接状态标志
     
-    Coro::Channel<ZkResult>::s_ptr m_connectChannel;   ///< 连接操作的Channel
+    std::mutex m_connMutex;                            ///< 连接状态互斥锁
+    std::condition_variable m_connCond;                 ///< 连接条件变量
+    ZkResult m_connResult;                               ///< 连接结果
+    bool m_connNotified{false};                         ///< 是否已通知
+
     std::mutex m_pendingMutex;                          ///< 保护待操作列表的互斥锁
     std::vector<PendingOp*> m_pendingOps;               ///< 待处理的异步操作列表
 };

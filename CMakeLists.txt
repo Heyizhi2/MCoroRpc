@@ -35,6 +35,8 @@ set(SOURCES
     ${CMAKE_SOURCE_DIR}/src/zkclient.cc
     ${CMAKE_SOURCE_DIR}/src/rpc_provider.cc
     ${CMAKE_SOURCE_DIR}/src/net_addr.cc
+    ${CMAKE_SOURCE_DIR}/src/rpc_server_impl.cc
+    ${CMAKE_SOURCE_DIR}/src/rpc_client_impl.cc
 )
 
 add_library(CoroRpc STATIC ${SOURCES})
@@ -96,11 +98,20 @@ target_link_libraries(test_tcpstream PRIVATE CoroRpc Catch2::Catch2WithMain)
 add_executable(benchmark_sched tests/benchmark_sched.cc)
 target_link_libraries(benchmark_sched PRIVATE CoroRpc nanobench)
 
-add_executable(rpc_server tests/rpc_test/rpc_server.cc tests/rpc_test/calc.pb.cc)
-target_link_libraries(rpc_server PRIVATE CoroRpc)
+add_executable(rpc_server_old tests/rpc_test/rpc_server.cc tests/rpc_test/calc.pb.cc)
+target_link_libraries(rpc_server_old PRIVATE CoroRpc)
 
-add_executable(rpc_client tests/rpc_test/rpc_client.cc tests/rpc_test/calc.pb.cc)
-target_link_libraries(rpc_client PRIVATE CoroRpc)
+add_executable(rpc_client_old tests/rpc_test/rpc_client.cc tests/rpc_test/calc.pb.cc)
+target_link_libraries(rpc_client_old PRIVATE CoroRpc)
+
+add_executable(rpc_server_new tests/rpc_test/rpc_server_new.cc tests/rpc_test/calc.pb.cc tests/rpc_test/calc_service.h)
+target_link_libraries(rpc_server_new PRIVATE CoroRpc)
+
+add_executable(rpc_client_new tests/rpc_test/rpc_client_new.cc tests/rpc_test/calc.pb.cc)
+target_link_libraries(rpc_client_new PRIVATE CoroRpc)
+
+add_executable(rpc_client_discovery tests/rpc_test/rpc_client_discovery.cc tests/rpc_test/calc.pb.cc)
+target_link_libraries(rpc_client_discovery PRIVATE CoroRpc)
 
 add_executable(echo_test_server tests/rpc_test/echo_test_server.cc)
 target_link_libraries(echo_test_server PRIVATE CoroRpc)

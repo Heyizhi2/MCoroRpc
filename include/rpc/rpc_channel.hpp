@@ -79,6 +79,12 @@ public:
                     google::protobuf::Message* response,
                     google::protobuf::Closure* done) override;
 
+    Task<void> CallMethodAsync(const google::protobuf::MethodDescriptor* method,
+                    google::protobuf::RpcController* controller,
+                    const google::protobuf::Message* request,
+                    google::protobuf::Message* response,
+                    google::protobuf::Closure* done = nullptr);
+
     void setTimeout(int timeout_ms);
     int getTimeout() const { return m_timeout_ms; }
 

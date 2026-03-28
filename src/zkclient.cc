@@ -8,6 +8,7 @@
  */
 #include "../include/rpc/zkclient.hpp"
 #include "../include/coro/wait_for.hpp"
+#include "../include/coro/sleep.hpp"
 #include <cstring>
 #include <algorithm>
 
@@ -23,24 +24,33 @@ void ZkClient::globalWatcher(zhandle_t* zh, int type, int state,
     
     if (type == ZOO_SESSION_EVENT) {
         if (state == ZOO_CONNECTED_STATE) {
-            // 连接成功
+            // 连接成功 - 使用条件变量通知
             self->m_connected.store(true);
-            if (self->m_connectChannel) {
-                self->m_connectChannel->send(ZkResult{ZOK, "", ""});
+            {
+                std::lock_guard<std::mutex> lock(self->m_connMutex);
+                self->m_connResult = ZkResult{ZOK, "", ""};
+                self->m_connNotified = true;
             }
+            self->m_connCond.notify_one();
         } else if (state == ZOO_EXPIRED_SESSION_STATE) {
             // 会话过期
             self->m_connected.store(false);
             self->cleanupPendingOps();
-            if (self->m_connectChannel) {
-                self->m_connectChannel->send(ZkResult{ZSESSIONEXPIRED, "", ""});
+            {
+                std::lock_guard<std::mutex> lock(self->m_connMutex);
+                self->m_connResult = ZkResult{ZSESSIONEXPIRED, "", ""};
+                self->m_connNotified = true;
             }
+            self->m_connCond.notify_one();
         } else if (state == ZOO_AUTH_FAILED_STATE) {
             // 认证失败
             self->m_connected.store(false);
-            if (self->m_connectChannel) {
-                self->m_connectChannel->send(ZkResult{ZNOAUTH, "", ""});
+            {
+                std::lock_guard<std::mutex> lock(self->m_connMutex);
+                self->m_connResult = ZkResult{ZNOAUTH, "", ""};
+                self->m_connNotified = true;
             }
+            self->m_connCond.notify_one();
         }
     }
 }
@@ -121,7 +131,9 @@ void ZkClient::cleanupPendingOps() {
  * @return 协程Task，连接结果
  */
 Coro::Task<ZkResult> ZkClient::start() {
-    m_connectChannel = std::make_shared<Coro::Channel<ZkResult>>();
+    if (m_connected.load()) {
+        co_return ZkResult{ZOK, "", ""};
+    }
     
     // 初始化 ZooKeeper 连接
     m_zkHandle = zookeeper_init(m_host.c_str(), globalWatcher, 
@@ -131,19 +143,41 @@ Coro::Task<ZkResult> ZkClient::start() {
         co_return ZkResult{ZSYSTEMERROR, "", "failed to init zookeeper"};
     }
     
-    // 等待连接结果，超时5秒
-    auto result = co_await Coro::wait_for(m_connectChannel->recv(), std::chrono::seconds(5));
+    // 使用轮询等待连接结果，超时5秒
+    auto startTime = std::chrono::steady_clock::now();
+    auto timeout = std::chrono::seconds(5);
     
-    if (!result.ok || result.is_timeout) {
+    while (!m_connNotified) {
+        auto elapsed = std::chrono::steady_clock::now() - startTime;
+        if (elapsed >= timeout) {
+            // 超时
+            if (m_zkHandle) {
+                zookeeper_close(m_zkHandle);
+                m_zkHandle = nullptr;
+            }
+            m_connected.store(false);
+            co_return ZkResult{ZSYSTEMERROR, "", "connection timeout"};
+        }
+        // 短暂休眠让出 CPU
+        co_await Coro::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    ZkResult result;
+    {
+        std::lock_guard<std::mutex> lock(m_connMutex);
+        result = m_connResult;
+        m_connNotified = false;  // 重置
+    }
+    
+    if (!result.ok()) {
         if (m_zkHandle) {
             zookeeper_close(m_zkHandle);
             m_zkHandle = nullptr;
         }
         m_connected.store(false);
-        co_return ZkResult{ZSYSTEMERROR, "", result.is_timeout ? "connection timeout" : "connection failed"};
     }
     
-    co_return std::move(result.value);
+    co_return result;
 }
 
 /**
@@ -344,10 +378,14 @@ void ZkClient::close() {
         // 清理待处理操作
         cleanupPendingOps();
         
-        // 关闭连接 Channel
-        if (m_connectChannel) {
-            m_connectChannel->close();
-            m_connectChannel.reset();
+        // 通知等待的协程
+        {
+            std::lock_guard<std::mutex> lock(m_connMutex);
+            if (!m_connNotified) {
+                m_connResult = ZkResult{ZCLOSING, "", "closing"};
+                m_connNotified = true;
+                m_connCond.notify_one();
+            }
         }
         
         // 关闭 ZooKeeper
