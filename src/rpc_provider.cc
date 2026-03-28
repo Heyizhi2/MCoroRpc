@@ -215,14 +215,46 @@ Coro::Task<void> RpcProvider::registerToZk() {
     printf("[Provider] Registering to ZK with addr: %s\n", addr.c_str());
     fflush(stdout);
     
+    // 创建 /rpc 根节点（持久节点）
+    auto rootResult = co_await m_zkClient->create("/rpc", "", 0);
+    if (!rootResult.ok() && rootResult.rc != ZNODEEXISTS) {
+        printf("[Provider] Failed to create /rpc: %s\n", rootResult.error().c_str());
+        fflush(stdout);
+    }
+    
     for (auto& [service_name, info] : m_dispatcher->getServices()) {
         std::string service_path = "/rpc/" + service_name;
         
-        // 跳过服务注册，暂时不写入 ZK
-        printf("[Provider] Would register service: %s\n", service_path.c_str());
-        fflush(stdout);
+        // 创建服务节点（持久节点）
+        auto svcResult = co_await m_zkClient->create(service_path, "", 0);
+        if (!svcResult.ok() && svcResult.rc != ZNODEEXISTS) {
+            printf("[Provider] Failed to create service node %s: %s\n", 
+                   service_path.c_str(), svcResult.error().c_str());
+            fflush(stdout);
+            continue;
+        }
+        
+        // 为每个方法创建节点，存储服务地址
+        for (const auto& method_name : info.methods) {
+            std::string method_path = service_path + "/" + method_name;
+            
+            // 使用临时节点，这样服务下线时自动删除
+            auto methodResult = co_await m_zkClient->create(
+                method_path, addr, ZOO_EPHEMERAL);
+            
+            if (!methodResult.ok() && methodResult.rc != ZNODEEXISTS) {
+                printf("[Provider] Failed to create method node %s: %s\n", 
+                       method_path.c_str(), methodResult.error().c_str());
+                fflush(stdout);
+                continue;
+            }
+            
+            printf("[Provider] Registered method: %s -> %s\n", 
+                   method_path.c_str(), addr.c_str());
+            fflush(stdout);
+        }
     }
-    printf("[Provider] ZK registration skipped (debug mode)\n");
+    printf("[Provider] ZK registration completed\n");
     fflush(stdout);
 }
 

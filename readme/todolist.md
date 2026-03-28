@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-26 15:57:16
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-28 15:23:23
+ * @LastEditTime: 2026-03-28 15:46:41
  * @FilePath: /MCoroRpc/readme/todolist.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -517,3 +517,22 @@ Next Steps
 恢复 ZK 服务注册功能
 添加单元测试
 完善错误处理
+
+
+ZK 服务注册功能已恢复。总结一下修复：
+
+问题原因：
+
+ZK 回调在独立线程中运行
+原代码使用 Channel 的 send() 尝试恢复协程
+从不同线程恢复协程导致内存问题（segfault）
+修复方案：
+
+将 PendingOp 结构从使用 Channel 改为使用 mutex + condition_variable
+回调线程只需设置结果并 notify，协程在原线程等待
+避免跨线程恢复协程的问题
+修改文件：
+
+include/rpc/zkclient.hpp - 修改 PendingOp 结构
+src/zkclient.cc - 修改回调和所有异步操作函数
+现在服务可以正常启动，ZK 注册成功（/rpc/testrpc.Calculator/Add -> 0.0.0.0:8000），RPC 调用也能正常返回结果。

@@ -60,8 +60,16 @@ void ZkClient::globalWatcher(zhandle_t* zh, int type, int state,
  */
 void ZkClient::createCompletion(int rc, const char* path, const void* data) {
     auto* op = static_cast<PendingOp*>(const_cast<void*>(data));
-    op->channel->send(ZkResult{rc, "", path ? std::string(path) : ""});
-    delete op;
+    std::string resultPath;
+    if (path) {
+        resultPath = std::string(path);
+    }
+    {
+        std::lock_guard<std::mutex> lock(op->mutex);
+        op->result = ZkResult{rc, "", resultPath};
+        op->ready = true;
+    }
+    op->cond.notify_one();
 }
 
 /**
@@ -74,8 +82,12 @@ void ZkClient::getCompletion(int rc, const char* value, int valueLen,
     if (value && valueLen > 0) {
         dataStr = std::string(value, valueLen);
     }
-    op->channel->send(ZkResult{rc, dataStr, ""});
-    delete op;
+    {
+        std::lock_guard<std::mutex> lock(op->mutex);
+        op->result = ZkResult{rc, dataStr, ""};
+        op->ready = true;
+    }
+    op->cond.notify_one();
 }
 
 /**
@@ -83,8 +95,12 @@ void ZkClient::getCompletion(int rc, const char* value, int valueLen,
  */
 void ZkClient::setCompletion(int rc, const struct Stat* stat, const void* data) {
     auto* op = static_cast<PendingOp*>(const_cast<void*>(data));
-    op->channel->send(ZkResult{rc, "", ""});
-    delete op;
+    {
+        std::lock_guard<std::mutex> lock(op->mutex);
+        op->result = ZkResult{rc, "", ""};
+        op->ready = true;
+    }
+    op->cond.notify_one();
 }
 
 /**
@@ -92,8 +108,12 @@ void ZkClient::setCompletion(int rc, const struct Stat* stat, const void* data) 
  */
 void ZkClient::deleteCompletion(int rc, const void* data) {
     auto* op = static_cast<PendingOp*>(const_cast<void*>(data));
-    op->channel->send(ZkResult{rc, "", ""});
-    delete op;
+    {
+        std::lock_guard<std::mutex> lock(op->mutex);
+        op->result = ZkResult{rc, "", ""};
+        op->ready = true;
+    }
+    op->cond.notify_one();
 }
 
 /**
@@ -102,15 +122,18 @@ void ZkClient::deleteCompletion(int rc, const void* data) {
 void ZkClient::getChildrenCompletion(int rc, const struct String_vector* strings, const struct Stat* stat, const void* data) {
     auto* op = static_cast<PendingOp*>(const_cast<void*>(data));
     std::string dataStr;
-    // 将子节点用逗号连接
     if (strings && strings->count > 0) {
         for (int i = 0; i < strings->count; ++i) {
             if (i > 0) dataStr += ",";
             dataStr += strings->data[i];
         }
     }
-    op->channel->send(ZkResult{rc, dataStr, ""});
-    delete op;
+    {
+        std::lock_guard<std::mutex> lock(op->mutex);
+        op->result = ZkResult{rc, dataStr, ""};
+        op->ready = true;
+    }
+    op->cond.notify_one();
 }
 
 /**
@@ -120,7 +143,12 @@ void ZkClient::getChildrenCompletion(int rc, const struct String_vector* strings
 void ZkClient::cleanupPendingOps() {
     std::lock_guard<std::mutex> lock(m_pendingMutex);
     for (auto* op : m_pendingOps) {
-        op->channel->send(ZkResult{ZCONNECTIONLOSS, "", ""});
+        {
+            std::lock_guard<std::mutex> opLock(op->mutex);
+            op->result = ZkResult{ZCONNECTIONLOSS, "", ""};
+            op->ready = true;
+        }
+        op->cond.notify_one();
         delete op;
     }
     m_pendingOps.clear();
@@ -193,14 +221,12 @@ Coro::Task<ZkResult> ZkClient::create(const std::string& path,
         co_return ZkResult{ZINVALIDSTATE, "", "not connected"};
     }
 
-    auto channel = std::make_shared<Coro::Channel<ZkResult>>();
     auto* op = new PendingOp{
         .opType = ZOO_CREATE_OP,
         .path = path,
         .data = data,
         .flags = flags,
-        .version = -1,
-        .channel = channel
+        .version = -1
     };
     
     // 添加到待处理列表
@@ -221,7 +247,18 @@ Coro::Task<ZkResult> ZkClient::create(const std::string& path,
     }
     
     // 等待异步结果
-    ZkResult result = co_await channel->recv();
+    {
+        std::unique_lock<std::mutex> lock(op->mutex);
+        op->cond.wait(lock, [op] { return op->ready; });
+    }
+    ZkResult result = op->result;
+    
+    // 从待处理列表中移除
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingOps.erase(std::remove(m_pendingOps.begin(), m_pendingOps.end(), op), m_pendingOps.end());
+    }
+    delete op;
     co_return result;
 }
 
@@ -233,14 +270,12 @@ Coro::Task<ZkResult> ZkClient::getData(const std::string& path) {
         co_return ZkResult{ZINVALIDSTATE, "", "not connected"};
     }
 
-    auto channel = std::make_shared<Coro::Channel<ZkResult>>();
     auto* op = new PendingOp{
         .opType = ZOO_GETDATA_OP,
         .path = path,
         .data = "",
         .flags = 0,
-        .version = -1,
-        .channel = channel
+        .version = -1
     };
     
     {
@@ -257,7 +292,17 @@ Coro::Task<ZkResult> ZkClient::getData(const std::string& path) {
         co_return ZkResult{rc, "", ""};
     }
     
-    ZkResult result = co_await channel->recv();
+    {
+        std::unique_lock<std::mutex> lock(op->mutex);
+        op->cond.wait(lock, [op] { return op->ready; });
+    }
+    ZkResult result = op->result;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingOps.erase(std::remove(m_pendingOps.begin(), m_pendingOps.end(), op), m_pendingOps.end());
+    }
+    delete op;
     co_return result;
 }
 
@@ -270,14 +315,12 @@ Coro::Task<ZkResult> ZkClient::setData(const std::string& path,
         co_return ZkResult{ZINVALIDSTATE, "", "not connected"};
     }
 
-    auto channel = std::make_shared<Coro::Channel<ZkResult>>();
     auto* op = new PendingOp{
         .opType = ZOO_SETDATA_OP,
         .path = path,
         .data = data,
         .flags = 0,
-        .version = version,
-        .channel = channel
+        .version = version
     };
     
     {
@@ -295,7 +338,17 @@ Coro::Task<ZkResult> ZkClient::setData(const std::string& path,
         co_return ZkResult{rc, "", ""};
     }
     
-    ZkResult result = co_await channel->recv();
+    {
+        std::unique_lock<std::mutex> lock(op->mutex);
+        op->cond.wait(lock, [op] { return op->ready; });
+    }
+    ZkResult result = op->result;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingOps.erase(std::remove(m_pendingOps.begin(), m_pendingOps.end(), op), m_pendingOps.end());
+    }
+    delete op;
     co_return result;
 }
 
@@ -307,14 +360,12 @@ Coro::Task<ZkResult> ZkClient::deleteNode(const std::string& path, int version) 
         co_return ZkResult{ZINVALIDSTATE, "", "not connected"};
     }
 
-    auto channel = std::make_shared<Coro::Channel<ZkResult>>();
     auto* op = new PendingOp{
         .opType = ZOO_DELETE_OP,
         .path = path,
         .data = "",
         .flags = 0,
-        .version = version,
-        .channel = channel
+        .version = version
     };
     
     {
@@ -331,7 +382,17 @@ Coro::Task<ZkResult> ZkClient::deleteNode(const std::string& path, int version) 
         co_return ZkResult{rc, "", ""};
     }
     
-    ZkResult result = co_await channel->recv();
+    {
+        std::unique_lock<std::mutex> lock(op->mutex);
+        op->cond.wait(lock, [op] { return op->ready; });
+    }
+    ZkResult result = op->result;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingOps.erase(std::remove(m_pendingOps.begin(), m_pendingOps.end(), op), m_pendingOps.end());
+    }
+    delete op;
     co_return result;
 }
 
@@ -343,14 +404,12 @@ Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path) {
         co_return ZkResult{ZINVALIDSTATE, "", "not connected"};
     }
 
-    auto channel = std::make_shared<Coro::Channel<ZkResult>>();
     auto* op = new PendingOp{
         .opType = ZOO_GETCHILDREN_OP,
         .path = path,
         .data = "",
         .flags = 0,
-        .version = -1,
-        .channel = channel
+        .version = -1
     };
     
     {
@@ -367,7 +426,18 @@ Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path) {
         co_return ZkResult{rc, "", ""};
     }
     
-    co_return co_await channel->recv();
+    {
+        std::unique_lock<std::mutex> lock(op->mutex);
+        op->cond.wait(lock, [op] { return op->ready; });
+    }
+    ZkResult result = op->result;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingOps.erase(std::remove(m_pendingOps.begin(), m_pendingOps.end(), op), m_pendingOps.end());
+    }
+    delete op;
+    co_return result;
 }
 
 /**

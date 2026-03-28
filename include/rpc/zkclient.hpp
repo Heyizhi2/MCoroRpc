@@ -151,7 +151,7 @@ public:
 private:
     /**
      * @brief 待处理的异步操作结构
-     * @details 用于存储异步操作的相关信息，通过Channel传递结果
+     * @details 用于存储异步操作的相关信息，通过mutex+condvar传递结果
      */
     struct PendingOp {
         int opType;                                      ///< 操作类型
@@ -159,7 +159,10 @@ private:
         std::string data;                                ///< 操作数据
         int flags;                                       ///< 标志位
         int version;                                     ///< 版本号
-        Coro::Channel<ZkResult>::s_ptr channel;         ///< 用于传递结果的Channel
+        std::mutex mutex;                                ///< 保护 result 和 ready
+        ZkResult result;                                 ///< 操作结果
+        bool ready{false};                               ///< 结果是否就绪
+        std::condition_variable cond;                    ///< 结果就绪条件变量
     };
 
     /**
