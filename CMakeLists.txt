@@ -118,3 +118,16 @@ target_link_libraries(echo_test_server PRIVATE CoroRpc)
 
 add_executable(echo_test_client tests/rpc_test/echo_test_client.cc)
 target_link_libraries(echo_test_client PRIVATE CoroRpc)
+
+# RPC 性能测试
+add_executable(rpc_benchmark_server tests/rpc_benchmark_server.cc)
+target_link_libraries(rpc_benchmark_server PRIVATE CoroRpc)
+
+add_executable(rpc_benchmark_client tests/rpc_benchmark_client.cc)
+target_link_libraries(rpc_benchmark_client PRIVATE CoroRpc)
+
+add_executable(rpc_full_benchmark tests/rpc_full_benchmark.cc)
+target_link_libraries(rpc_full_benchmark PRIVATE CoroRpc)
+
+add_executable(rpc_simple_benchmark tests/rpc_simple_benchmark.cc)
+target_link_libraries(rpc_simple_benchmark PRIVATE CoroRpc)
