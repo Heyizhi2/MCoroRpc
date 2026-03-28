@@ -330,8 +330,9 @@ public:
             throw ChannelClosedException{};
         }
 
-        co_await ReaderAwaiter<T>{this};
-        co_return T{};
+        // co_await 会调用 await_resume() 返回 value
+        T result = co_await ReaderAwaiter<T>{this};
+        co_return result;
     }
 
     /**
@@ -376,16 +377,32 @@ public:
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
+        
+        // 有等待的读者，直接传递值并唤醒
         if (!readers_.empty()) {
             auto* reader = readers_.front();
             readers_.pop_front();
             reader->resumeWithValue(std::move(value));
             return true;
         }
+        
+        // 放入缓冲区
         if (buffer_.size() < capacity_) {
             buffer_.push(std::move(value));
+            
+            // 唤醒一个等待的读者
+            if (!readers_.empty()) {
+                auto* reader = readers_.front();
+                readers_.pop_front();
+                T val = std::move(buffer_.front());
+                buffer_.pop();
+                reader->resumeWithValue(std::move(val));
+            }
+            
             return true;
         }
+        
+        // 缓冲区满，发送失败
         return false;
     }
 

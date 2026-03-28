@@ -24,6 +24,7 @@ int main() {
     provider->setIp("127.0.0.1");
     provider->setPort(18000);
     provider->setZkHost("");  // 不需要 ZooKeeper
+    provider->setWorkerCount(4);  // 4个worker
     
     auto* service = new CalculatorServiceImpl();
     provider->registerService(service);

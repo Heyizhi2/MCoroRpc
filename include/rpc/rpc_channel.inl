@@ -245,7 +245,11 @@ Task<void> RpcChannel::workerLoop() {
             }
             
             auto read_task = m_stream->readToBuffer();
+            printf("[Channel] before wait_for read...\n");
+            fflush(stdout);
             auto read_result = co_await wait_for(std::move(read_task), std::chrono::milliseconds(timeout_ms));
+            printf("[Channel] wait_for read returned, ok=%d, timeout=%d\n", read_result.ok, read_result.is_timeout);
+            fflush(stdout);
             
             if (!read_result.ok) {
                 m_connected.store(false);

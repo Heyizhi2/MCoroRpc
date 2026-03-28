@@ -120,7 +120,16 @@ void RpcDispatcher::dispatch(std::shared_ptr<Coro::TinyPBProtocol> request,
     
     google::protobuf::Message* rsp_msg = info.service->GetResponsePrototype(method).New();
     
-    info.service->CallMethod(method, nullptr, req_msg, rsp_msg, nullptr);
+    printf("[Provider] About to call CallMethod\n");
+    fflush(stdout);
+    
+    struct NoOpClosure : public google::protobuf::Closure {
+        void Run() override {}
+    };
+    NoOpClosure noop;
+    info.service->CallMethod(method, nullptr, req_msg, rsp_msg, &noop);
+    printf("[Provider] CallMethod returned, about to serialize\n");
+    fflush(stdout);
     
     if (!rsp_msg->SerializeToString(&response->m_pb_data)) {
         response->m_err_code = 5;
@@ -225,6 +234,7 @@ std::string RpcProvider::getLocalAddr() {
  * @brief 处理客户端连接
  * @param stream TCP 流
  * @details 接收请求，解码，调用分发器处理，编码响应并返回
+ *          长连接：处理完一个请求后继续等待下一个请求，直到连接关闭
  */
 Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
     auto coder = std::make_shared<Coro::TinyPBCoder>();
@@ -236,21 +246,14 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
         auto buffer = stream.getReadBuffer();
         
         try {
-            printf("[Provider] handleClient: waiting for data...\n");
-            fflush(stdout);
             co_await stream.readToBuffer();
-            printf("[Provider] handleClient: read done, buffer readable=%ld\n", buffer->readAble());
-            fflush(stdout);
             
             if (buffer->readAble() == 0) {
-                printf("[Provider] handleClient: connection closed (readable=0)\n");
-                fflush(stdout);
+                // 连接关闭
                 break;
             }
             
             coder->decode(msgs, buffer);
-            printf("[Provider] handleClient: decoded %ld messages\n", msgs.size());
-            fflush(stdout);
             
             for (auto& msg : msgs) {
                 auto request = std::dynamic_pointer_cast<Coro::TinyPBProtocol>(msg);
@@ -266,43 +269,44 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
                 }
                 
                 m_dispatcher->dispatch(request, response, ctx);
+                printf("[Provider] dispatch done\n");
+                fflush(stdout);
                 
                 std::vector<Coro::AbstarcPortocol::s_ptr> responses;
                 responses.push_back(response);
                 
                 auto out_buf = std::make_shared<Coro::net::TcpBuffer>(1024);
                 coder->encode(responses, out_buf);
+                printf("[Provider] encode done\n");
+                fflush(stdout);
                 
                 std::vector<char> data(out_buf->m_buffer.begin() + out_buf->readIndex(), 
                                out_buf->m_buffer.begin() + out_buf->writeIndex());
+                printf("[Provider] data prepared, size=%ld\n", (long)data.size());
+                fflush(stdout);
                 co_await stream.write(data);
-                printf("[Provider] handleClient: response sent, data size=%ld\n", data.size());
+                printf("[Provider] Response written, size=%ld\n", (long)data.size());
                 fflush(stdout);
             }
-            
-            printf("[Provider] handleClient: done processing, clearing buffer and waiting for next...\n");
-            fflush(stdout);
             
             // 清空读缓冲区，准备接受下一个请求
             buffer->moveReadIndex(buffer->readAble());
             
-            // 不再循环，等待 accept 循环来处理新连接
-            continue;
-            
         } catch (...) {
-            printf("[Provider] handleClient: exception, exiting\n");
+            printf("[Provider] exception in handleClient\n");
             fflush(stdout);
             break;
         }
     }
-    printf("[Provider] handleClient: loop exited\n");
-    fflush(stdout);
+    
+    stream.close();
 }
 
 /**
  * @brief 启动 RPC 服务
  * @return 协程Task
  * @details 启动 TCP 服务，连接 ZooKeeper，注册服务，接受客户端连接
+ *         使用 MPMC 模式：accept 作为生产者，多个 worker 作为消费者
  */
 Coro::Task<void> RpcProvider::start() {
     if (m_started) {
@@ -310,6 +314,9 @@ Coro::Task<void> RpcProvider::start() {
     }
     m_started = true;
     m_stop.store(false);
+    
+    // 创建客户端连接 Channel (MPMC 模式)
+    m_client_channel = std::make_unique<Channel<Coro::net::TcpStream>>(100);
     
     // 启动 TCP 服务
     printf("[Provider] Starting TCP service on port %d...\n", m_port);
@@ -326,26 +333,51 @@ Coro::Task<void> RpcProvider::start() {
         co_await registerToZk();
     }
     
-    printf("[Provider] Entering accept loop\n");
+    // 启动多个 worker 协程作为消费者
+    printf("[Provider] Starting %d workers...\n", m_worker_count);
+    for (int i = 0; i < m_worker_count; ++i) {
+        auto worker = [this, i]() -> Coro::Task<void> {
+            printf("[Provider] Worker %d started\n", i);
+            fflush(stdout);
+            while (!m_stop.load()) {
+                try {
+                    auto stream = co_await this->m_client_channel->recv();
+                    printf("[Provider] Worker %d: got client fd=%d\n", i, stream.fd());
+                    fflush(stdout);
+                    co_await this->handleClient(std::move(stream));
+                    printf("[Provider] Worker %d: handleClient finished\n", i);
+                    fflush(stdout);
+                } catch (const ChannelClosedException& e) {
+                    printf("[Provider] Worker %d: channel closed\n", i);
+                    break;
+                } catch (...) {
+                    printf("[Provider] Worker %d: exception\n", i);
+                }
+            }
+            printf("[Provider] Worker %d: exiting\n", i);
+            fflush(stdout);
+        };
+        worker().schedule();
+    }
+    
+    // accept 循环作为生产者
+    printf("[Provider] Entering accept loop (producer)\n");
     fflush(stdout);
     
-    // 使用 co_await 顺序处理，确保 handleClient 执行完成
     while (!m_stop.load()) {
         printf("[Provider] Waiting for client connection...\n");
         fflush(stdout);
         
         auto stream = co_await m_tcpService->accept();
-        printf("[Provider] Client connected! fd=%d\n", stream.fd());
+        printf("[Provider] Producer: got client fd=%d, sending to channel...\n", stream.fd());
         fflush(stdout);
         
-        // 顺序处理，不返回 accept 循环
-        // 如果 client 关闭连接，handleClient 会返回
-        // 然后 accept 会等待新的连接
-        co_await this->handleClient(std::move(stream));
-        
-        printf("[Provider] handleClient finished, continuing to next accept\n");
-        fflush(stdout);
+        // 发送到 Channel (生产者) - 使用异步send
+        co_await m_client_channel->send(std::move(stream));
     }
+    
+    // 关闭 Channel
+    m_client_channel->close();
     
     co_return;
 }

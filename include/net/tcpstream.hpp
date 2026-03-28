@@ -45,6 +45,11 @@ namespace Coro {
             using buffer_type=std::vector<char>;
 
             /**
+             * @brief 默认构造函数
+             */
+            TcpStream();
+            
+            /**
              * @brief 构造函数
              * @param fd socket文件描述符
              * @param bufferSize 读写缓冲区大小，默认65536

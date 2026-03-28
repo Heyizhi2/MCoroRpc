@@ -13,6 +13,15 @@ namespace Coro {
 namespace net {
 
 /**
+ * @brief 默认构造函数
+ */
+TcpStream::TcpStream()
+    : m_fd(-1), 
+      m_read_buffer(std::make_shared<TcpBuffer>(65536)),
+      m_write_buffer(std::make_shared<TcpBuffer>(65536)) {
+}
+
+/**
  * @brief 构造函数
  * @param fd 文件描述符
  * @param bufferSize 读写缓冲区大小
@@ -98,9 +107,8 @@ Task<ssize_t> TcpStream::readToBuffer() {
         if (n > 0) {
             m_read_buffer->writeToBuffer(tmp, n);
             total += n;
-            printf("[TcpStream] readToBuffer: read %ld bytes, total=%ld\n", (long)n, (long)total);
         } else if (n == 0) {
-            printf("[TcpStream] readToBuffer: connection closed (n=0)\n");
+            // recv 返回 0 表示对方关闭了连接
             break;
         } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
             if (total > 0) break;
@@ -113,7 +121,6 @@ Task<ssize_t> TcpStream::readToBuffer() {
         }
     }
 
-    printf("[TcpStream] readToBuffer: returning total=%ld\n", (long)total);
     co_return total;
 }
 
@@ -139,7 +146,6 @@ Task<> TcpStream::writeFromBuffer() {
             m_write_buffer->m_buffer.data() + m_write_buffer->readIndex(), 
             m_write_buffer->readAble(), 0);
         
-        printf("[TcpStream] writeFromBuffer: send returned %ld, errno=%d\n", (long)n, errno);
         if (n > 0) {
             m_write_buffer->moveReadIndex(n);
         } else if (n == 0) {
@@ -152,7 +158,6 @@ Task<> TcpStream::writeFromBuffer() {
             throw std::system_error(errno, std::generic_category(), "write failed");
         }
     }
-    printf("[TcpStream] writeFromBuffer: done, write_buffer readable=0\n");
     co_return;
 }
 

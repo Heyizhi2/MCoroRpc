@@ -117,6 +117,12 @@ public:
     void setIp(const std::string& ip);
 
     /**
+     * @brief 设置 worker 数量
+     * @param count worker 协程数量
+     */
+    void setWorkerCount(int count) { m_worker_count = count; }
+
+    /**
      * @brief 注册 protobuf 服务
      * @param service protobuf 服务指针
      * @note 服务的所有方法会注册到分发器，并通过 ZooKeeper 暴露给客户端
@@ -169,6 +175,10 @@ private:
     ZkClient::ptr m_zkClient;                               ///< ZooKeeper 客户端
     std::unique_ptr<Coro::net::TcpService> m_tcpService;   ///< TCP 服务
     std::unique_ptr<RpcDispatcher> m_dispatcher;           ///< RPC 分发器
+    
+    // MPMC 模式：生产者-消费者
+    std::unique_ptr<Channel<Coro::net::TcpStream>> m_client_channel;  ///< 客户端连接通道
+    int m_worker_count = 1;                                  ///< worker 协程数量
     
     std::atomic<bool> m_stop{true};                         ///< 停止标志
     bool m_started = false;                                ///< 启动状态标志

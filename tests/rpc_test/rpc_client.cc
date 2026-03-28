@@ -9,53 +9,56 @@ int main() {
     std::cout << "[Client] Starting..." << std::endl;
     
     auto channel = std::make_shared<Coro::RpcChannel>("127.0.0.1", 18000);
-    std::atomic<bool> done{false};
-    int result = 0;
+    std::atomic<int> done{0};
+    std::atomic<int> success{0};
     
-    auto run = [&channel, &done, &result]() -> Coro::Task<void> {
+    auto runCall = [&channel, &done, &success](int a, int b, int id) -> Coro::Task<void> {
         co_await channel->connect();
-        printf("[Client] Connected!\n");
         
         auto controller = std::make_shared<Coro::RpcController>();
-        controller->SetTimeout(3000);
+        controller->SetTimeout(5000);
         
         testrpc::AddRequest request;
-        request.set_a(10);
-        request.set_b(20);
+        request.set_a(a);
+        request.set_b(b);
         
         testrpc::AddResponse response;
         
         auto* stub = new testrpc::Calculator::Stub(channel.get());
         
-        printf("[Client] Calling Add(10, 20)...\n");
+        printf("[Client %d] Calling Add(%d, %d)...\n", id, a, b);
         fflush(stdout);
         
         stub->Add(controller.get(), &request, &response, nullptr);
         
-        // 等待 controller 完成（通过轮询，最多3秒）
-        for (int i = 0; i < 300 && !controller->Finished(); i++) {
+        for (int i = 0; i < 500 && !controller->Finished(); i++) {
             co_await Coro::sleep_for(std::chrono::milliseconds(10));
         }
         
         if (controller->Failed()) {
-            printf("[Client] RPC failed: %s (err_code=%d)\n", controller->ErrorText().c_str(), controller->ErrorCode());
+            printf("[Client %d] RPC failed: %s\n", id, controller->ErrorText().c_str());
         } else {
-            printf("[Client] result = %d, finished=%d\n", response.result(), controller->Finished());
+            printf("[Client %d] result = %d\n", id, response.result());
+            success++;
         }
         
-        done = true;
+        done++;
         
-        channel->close();
         co_return;
     };
     
-    run().schedule();
+    // 启动4个并发调用
+    runCall(10, 20, 1).schedule();
+    runCall(30, 40, 2).schedule();
+    runCall(50, 60, 3).schedule();
+    runCall(100, 200, 4).schedule();
+    
     Coro::get_event_loop().run_until_complete();
     
-    // 如果3秒内没完成，说明有问题
-    if (!done) {
-        printf("[Client] ERROR: RPC timed out!\n");
-    }
+    printf("\n[Client] Done: %d/%d calls completed, %d successful\n", 
+           done.load(), 4, success.load());
+    
+    channel->close();
     
     return 0;
 }

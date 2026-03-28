@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-15 10:39:56
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-27 19:08:36
+ * @LastEditTime: 2026-03-27 19:48:18
  * @FilePath: /MCoroRpc/readme/readme.md
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
 -->
@@ -620,9 +620,20 @@ ZkClient：协程化 ZK 客户端，实现服务注册/发现
 代码总计约 3300 行，异步IO框架性能测试协程版本与原生 epoll+非阻塞IO QPS 差距约 15%。但是代码量减少了50%，相当于牺牲了部分性能，换取代码易用性
 想请教老师，这个工作量是否满足毕业设计要求？还需要补充哪些内容？
 
-
+#### 问题模块
 
 问题在于：使用 co_await 后，accept() 返回了但 handleClient 没有真正执行。这是因为协程调度的问题。
 
 让我先清理 debug 代码，然后尝试另一种方法 - 让 Provider 的 handleClient 也在独立的协程中运行，但是使用正确的调度方式：
 Provider 处理：使用 co_await handleClient() 而不是 schedule() 来确保正确执行
+
+
+
+一、设计思路
+生产者：start() 中的 accept 循环作为生产者，将每个新接受的 TcpStream 放入一个 Channel<net::TcpStream>。
+
+消费者：多个 worker 协程作为消费者，从 Channel 中取出 stream，调用 handleClient 处理。
+
+并发处理：worker 协程数量可以根据 CPU 核心数或需求设置，每个 worker 独立处理一个连接（一个连接上的多个请求串行，但不同连接并行）。
+
+长连接：handleClient 内部使用 continue 保持循环，处理完一个请求后继续等待下一个请求，直到连接关闭。
