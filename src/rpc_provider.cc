@@ -4,6 +4,7 @@
 #include "../include/net/tcp/tcp_buffer.h"
 #include "../include/net/tcp/net_addr.h"
 #include <google/protobuf/message.h>
+#include <spdlog/fmt/bundled/base.h>
 #include <sstream>
 
 namespace Coro {
@@ -390,7 +391,7 @@ Coro::Task<void> RpcProvider::start() {
     printf("[Provider] Starting %d workers...\n", m_worker_count);
     for (int i = 0; i < m_worker_count; ++i) {
         auto worker = [this, i]() -> Coro::Task<void> {
-            printf("[Provider] Worker %d started\n", i);
+           fmt::println("[Provider] Worker {} started\n", i);
             fflush(stdout);
             while (!m_stop.load()) {
                 try {

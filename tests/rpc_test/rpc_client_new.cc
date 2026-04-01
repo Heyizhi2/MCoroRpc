@@ -1,3 +1,11 @@
+/*
+ * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
+ * @Date: 2026-03-28 13:53:35
+ * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
+ * @LastEditTime: 2026-03-29 18:15:38
+ * @FilePath: /MCoroRpc/tests/rpc_test/rpc_client_new.cc
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 /**
  * @file rpc_client_new.cc
  * @brief 使用新版 RpcClient 的示例
@@ -74,7 +82,6 @@ int main() {
         client->disconnect();
         printf("[RpcClient] Disconnected\n");
     };
-
     clientTask().schedule();
 
     printf("[RpcClient] Running event loop...\n");

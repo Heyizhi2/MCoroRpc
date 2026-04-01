@@ -1,0 +1,190 @@
+/**
+ * @file rpc_concurrency_benchmark.cc
+ * @brief 高并发 RPC 框架吞吐量测试
+ * 
+ * 使用方式:
+ * 1. 先启动 server: ./rpc_concurrency_benchmark --server
+ * 2. 后启动 client: ./rpc_concurrency_benchmark --client
+ */
+
+#include "../../include/coro.hpp"
+#include "../../include/rpc/rpc_server.hpp"
+#include "../../include/rpc/rpc_client.hpp"
+#include "calc.pb.h"
+#include "calc_service.h"
+#include <atomic>
+#include <chrono>
+#include <vector>
+#include <iostream>
+#include <iomanip>
+#include <thread>
+#include <cstring>
+
+using namespace std::chrono;
+
+constexpr int TOTAL_REQUESTS = 10000;
+constexpr int CONCURRENT_CLIENTS = 50;
+constexpr int REQUESTS_PER_CLIENT = TOTAL_REQUESTS / CONCURRENT_CLIENTS;
+constexpr int SERVER_PORT = 8001;
+
+std::atomic<int> g_success_count{0};
+std::atomic<int> g_fail_count{0};
+std::atomic<int> g_clients_done{0};
+
+Coro::Task<void> runClientBenchmark() {
+    std::vector<Coro::Task<>> clientTasks;
+    
+    for (int i = 0; i < CONCURRENT_CLIENTS; ++i) {
+        auto task = [i]() -> Coro::Task<void> {
+            Coro::RpcClientOptions options;
+            options.zkHost = "";
+            options.timeoutMs = 30000;
+            
+            auto client = std::make_shared<Coro::RpcClient>(options);
+            
+            co_await client->connect("127.0.0.1", SERVER_PORT);
+            
+            co_await Coro::sleep_for(std::chrono::milliseconds(50));
+            
+            auto* serviceDesc = testrpc::Calculator::descriptor();
+            auto* methodDesc = serviceDesc->method(0);
+            
+            std::vector<Coro::Task<>> requestTasks;
+            requestTasks.reserve(REQUESTS_PER_CLIENT);
+            
+            for (int j = 0; j < REQUESTS_PER_CLIENT; ++j) {
+                auto reqTask = [i, j, client, methodDesc]() -> Coro::Task<void> {
+                    testrpc::AddRequest request;
+                    request.set_a(i);
+                    request.set_b(j);
+                    
+                    testrpc::AddResponse response;
+                    auto controller = std::make_shared<Coro::RpcController>();
+                    controller->SetTimeout(30000);
+                    
+                    auto channel = client->getChannel();
+                    if (!channel) {
+                        g_fail_count.fetch_add(1);
+                        co_return;
+                    }
+                    
+                    try {
+                        co_await channel->CallMethodAsync(methodDesc, controller.get(), &request, &response, nullptr);
+                        if (!controller->Failed()) {
+                            g_success_count.fetch_add(1);
+                        } else {
+                            g_fail_count.fetch_add(1);
+                        }
+                    } catch (...) {
+                        g_fail_count.fetch_add(1);
+                    }
+                };
+                requestTasks.push_back(reqTask());
+            }
+            
+            for (auto& t : requestTasks) {
+                t.schedule();
+            }
+            
+            co_await Coro::sleep_for(std::chrono::milliseconds(100));
+            
+            client->disconnect();
+            g_clients_done.fetch_add(1);
+        };
+        clientTasks.push_back(task());
+    }
+    
+    for (auto& t : clientTasks) {
+        t.schedule();
+    }
+    
+    int last_count = 0;
+    while (g_clients_done.load() < CONCURRENT_CLIENTS) {
+        int current = g_success_count.load() + g_fail_count.load();
+        if (current == last_count && current > 0) {
+            co_await Coro::sleep_for(std::chrono::milliseconds(200));
+        }
+        last_count = current;
+        co_await Coro::sleep_for(std::chrono::milliseconds(50));
+    }
+    
+    co_await Coro::sleep_for(std::chrono::milliseconds(500));
+    
+    co_return;
+}
+
+void runServer() {
+    std::cout << "Starting RPC server on port " << SERVER_PORT << "...\n";
+    fflush(stdout);
+    
+    Coro::RpcServer server(SERVER_PORT, "");
+    server.setWorkerCount(16);
+    
+    CalculatorServiceImpl calcService;
+    server.registerService(&calcService);
+    
+    auto serverTask = [&server]() -> Coro::Task<void> {
+        co_await server.start();
+    };
+    serverTask().schedule();
+    
+    Coro::get_event_loop().run_until_complete();
+}
+
+void runClient() {
+    std::cout << "Starting client benchmark...\n";
+    std::cout << "Configuration:\n";
+    std::cout << "  Total Requests:    " << TOTAL_REQUESTS << "\n";
+    std::cout << "  Concurrent Clients: " << CONCURRENT_CLIENTS << "\n";
+    std::cout << "  Requests/Client:  " << REQUESTS_PER_CLIENT << "\n";
+    std::cout << "  Server Port:      " << SERVER_PORT << "\n";
+    fflush(stdout);
+    
+    auto start = steady_clock::now();
+    
+    runClientBenchmark().schedule();
+    
+    Coro::get_event_loop().run_until_complete();
+    
+    auto end = steady_clock::now();
+    auto duration = duration_cast<nanoseconds>(end - start).count();
+    double total_time_ms = duration / 1000000.0;
+    
+    int total = g_success_count.load() + g_fail_count.load();
+    double avg_latency_us = total > 0 ? (duration / 1000.0 / total) : 0;
+    double throughput_rps = total > 0 ? (total * 1000000.0 / total_time_ms) : 0;
+    
+    std::cout << "\n";
+    std::cout << "========================================\n";
+    std::cout << "            RESULTS                     \n";
+    std::cout << "========================================\n";
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "  Total Time:        " << total_time_ms << " ms\n";
+    std::cout << "  Success Count:    " << g_success_count.load() << "\n";
+    std::cout << "  Fail Count:       " << g_fail_count.load() << "\n";
+    std::cout << "  Avg Latency:      " << avg_latency_us << " us\n";
+    std::cout << "  Throughput:       " << std::setprecision(0) << throughput_rps << " req/s\n";
+    std::cout << "\n";
+    std::cout << "########################################\n";
+    std::cout << "#         BENCHMARK COMPLETE           #\n";
+    std::cout << "########################################\n\n";
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " --server | --client\n";
+        return 1;
+    }
+    
+    if (strcmp(argv[1], "--server") == 0) {
+        runServer();
+    } else if (strcmp(argv[1], "--client") == 0) {
+        runClient();
+    } else {
+        std::cerr << "Unknown option: " << argv[1] << "\n";
+        std::cerr << "Usage: " << argv[0] << " --server | --client\n";
+        return 1;
+    }
+    
+    return 0;
+}
