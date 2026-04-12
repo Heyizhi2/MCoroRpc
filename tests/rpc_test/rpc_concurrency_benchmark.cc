@@ -31,85 +31,74 @@ std::atomic<int> g_success_count{0};
 std::atomic<int> g_fail_count{0};
 std::atomic<int> g_clients_done{0};
 
+Coro::Task<void> runClientRequests(int client_id, std::shared_ptr<Coro::RpcClient> client) {
+    auto* serviceDesc = testrpc::Calculator::descriptor();
+    auto* methodDesc = serviceDesc->method(0);
+    
+    auto channel = client->getChannel();
+    if (!channel) {
+        g_fail_count.fetch_add(REQUESTS_PER_CLIENT);
+        co_return;
+    }
+    
+    for (int j = 0; j < REQUESTS_PER_CLIENT; ++j) {
+        testrpc::AddRequest request;
+        request.set_a(client_id);
+        request.set_b(j);
+        
+        testrpc::AddResponse response;
+        auto controller = std::make_shared<Coro::RpcController>();
+        controller->SetTimeout(30000);
+        
+        try {
+            co_await channel->CallMethodAsync(methodDesc, controller.get(), &request, &response, nullptr);
+            if (!controller->Failed()) {
+                g_success_count.fetch_add(1);
+            } else {
+                g_fail_count.fetch_add(1);
+            }
+        } catch (...) {
+            g_fail_count.fetch_add(1);
+        }
+    }
+    
+    co_return;
+}
+
+Coro::Task<void> runSingleClient(int client_id) {
+    Coro::RpcClientOptions options;
+    options.zkHost = "";
+    options.timeoutMs = 30000;
+    
+    auto client = std::make_shared<Coro::RpcClient>(options);
+    
+    co_await client->connect("127.0.0.1", SERVER_PORT);
+    
+    co_await runClientRequests(client_id, client);
+    
+    client->disconnect();
+    g_clients_done.fetch_add(1);
+    
+    co_return;
+}
+
 Coro::Task<void> runClientBenchmark() {
     std::vector<Coro::Task<>> clientTasks;
+    clientTasks.reserve(CONCURRENT_CLIENTS);
     
     for (int i = 0; i < CONCURRENT_CLIENTS; ++i) {
-        auto task = [i]() -> Coro::Task<void> {
-            Coro::RpcClientOptions options;
-            options.zkHost = "";
-            options.timeoutMs = 30000;
-            
-            auto client = std::make_shared<Coro::RpcClient>(options);
-            
-            co_await client->connect("127.0.0.1", SERVER_PORT);
-            
-            co_await Coro::sleep_for(std::chrono::milliseconds(50));
-            
-            auto* serviceDesc = testrpc::Calculator::descriptor();
-            auto* methodDesc = serviceDesc->method(0);
-            
-            std::vector<Coro::Task<>> requestTasks;
-            requestTasks.reserve(REQUESTS_PER_CLIENT);
-            
-            for (int j = 0; j < REQUESTS_PER_CLIENT; ++j) {
-                auto reqTask = [i, j, client, methodDesc]() -> Coro::Task<void> {
-                    testrpc::AddRequest request;
-                    request.set_a(i);
-                    request.set_b(j);
-                    
-                    testrpc::AddResponse response;
-                    auto controller = std::make_shared<Coro::RpcController>();
-                    controller->SetTimeout(30000);
-                    
-                    auto channel = client->getChannel();
-                    if (!channel) {
-                        g_fail_count.fetch_add(1);
-                        co_return;
-                    }
-                    
-                    try {
-                        co_await channel->CallMethodAsync(methodDesc, controller.get(), &request, &response, nullptr);
-                        if (!controller->Failed()) {
-                            g_success_count.fetch_add(1);
-                        } else {
-                            g_fail_count.fetch_add(1);
-                        }
-                    } catch (...) {
-                        g_fail_count.fetch_add(1);
-                    }
-                };
-                requestTasks.push_back(reqTask());
-            }
-            
-            for (auto& t : requestTasks) {
-                t.schedule();
-            }
-            
-            co_await Coro::sleep_for(std::chrono::milliseconds(100));
-            
-            client->disconnect();
-            g_clients_done.fetch_add(1);
-        };
-        clientTasks.push_back(task());
+        clientTasks.push_back(runSingleClient(i));
     }
     
     for (auto& t : clientTasks) {
         t.schedule();
     }
     
-    int last_count = 0;
     while (g_clients_done.load() < CONCURRENT_CLIENTS) {
-        int current = g_success_count.load() + g_fail_count.load();
-        if (current == last_count && current > 0) {
-            co_await Coro::sleep_for(std::chrono::milliseconds(200));
-        }
-        last_count = current;
         co_await Coro::sleep_for(std::chrono::milliseconds(50));
     }
     
-    co_await Coro::sleep_for(std::chrono::milliseconds(500));
-    
+    co_await Coro::sleep_for(std::chrono::milliseconds(100));
     co_return;
 }
 
