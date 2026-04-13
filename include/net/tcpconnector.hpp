@@ -19,6 +19,8 @@
 #include <unistd.h>
 #include <memory>
 #include <string_view>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include "../coro/task.hpp"
 #include "tcpstream.hpp"
 #include "ioawaiter.hpp"
@@ -106,6 +108,9 @@ inline Task<TcpStream> connect(std::string_view host, std::uint16_t port) {
         throw std::system_error(std::make_error_code(std::errc::address_not_available),
                                 "no address succeeded");
     }
+
+    int nodelay = 1;
+    ::setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
     co_return TcpStream{sockfd};
 }

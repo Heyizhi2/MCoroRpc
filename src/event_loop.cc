@@ -31,11 +31,11 @@ namespace Coro {
      }
 
     /**
-     * @brief 获取全局事件循环单例
+     * @brief 获取当前线程的事件循环
      * @return 事件循环引用
      */
     Eventloop& get_event_loop(){
-        static Eventloop loop;
+        thread_local Eventloop loop;
         return  loop;
     }
 
@@ -46,6 +46,13 @@ namespace Coro {
         while (!is_stop()) {
             run_once();
         }
+    }
+
+    /**
+     * @brief 停止事件循环
+     */
+    void Eventloop::stop() {
+        m_stop.store(true);
     }
 
     /**

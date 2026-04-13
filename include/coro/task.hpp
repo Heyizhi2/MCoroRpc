@@ -343,6 +343,15 @@ namespace Coro {
             }
         }
 
+        /**
+         * @brief 调度Task到指定事件循环
+         */
+        void scheduleOn(Eventloop& loop) {
+            if (m_handle) {
+                m_handle.promise().scheduleOn(loop);
+            }
+        }
+
     private:
         /**
          * @brief 销毁协程句柄

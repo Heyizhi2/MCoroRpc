@@ -3,6 +3,7 @@
 #include "../include/coro.hpp"
 #include "../include/net/tcp/tcp_buffer.h"
 #include "../include/net/tcp/net_addr.h"
+#include "../include/utils/object_pool.hpp"
 #include <google/protobuf/message.h>
 #include <spdlog/fmt/bundled/base.h>
 #include <sstream>
@@ -20,9 +21,9 @@ void RpcDispatcher::registerService(google::protobuf::Service* service) {
     const auto* desc = service->GetDescriptor();
     std::string service_name = desc->full_name();
     
-    printf("[Dispatcher] registerService: full_name=%s, method_count=%d\n", 
-           service_name.c_str(), desc->method_count());
-    fflush(stdout);
+    // printf("[Dispatcher] registerService: full_name=%s, method_count=%d\n", 
+    //        service_name.c_str(), desc->method_count());
+    // fflush(stdout);
     
     RpcServiceInfo info;
     info.service = service;
@@ -34,11 +35,11 @@ void RpcDispatcher::registerService(google::protobuf::Service* service) {
     
     m_services[service_name] = std::move(info);
     
-    printf("[Dispatcher] Registered service, m_services.size=%zu\n", m_services.size());
-    for (auto& kv : m_services) {
-        printf("  - %s\n", kv.first.c_str());
-    }
-    fflush(stdout);
+    //printf("[Dispatcher] Registered service, m_services.size=%zu\n", m_services.size());
+    // for (auto& kv : m_services) {
+    //     printf("  - %s\n", kv.first.c_str());
+    // }
+    // fflush(stdout);
 }
 
 /**
@@ -121,16 +122,16 @@ void RpcDispatcher::dispatch(std::shared_ptr<Coro::TinyPBProtocol> request,
     
     google::protobuf::Message* rsp_msg = info.service->GetResponsePrototype(method).New();
     
-    printf("[Provider] About to call CallMethod\n");
-    fflush(stdout);
+    //printf("[Provider] About to call CallMethod\n");
+    //fflush(stdout);
     
     struct NoOpClosure : public google::protobuf::Closure {
         void Run() override {}
     };
     NoOpClosure noop;
     info.service->CallMethod(method, nullptr, req_msg, rsp_msg, &noop);
-    printf("[Provider] CallMethod returned, about to serialize\n");
-    fflush(stdout);
+    // printf("[Provider] CallMethod returned, about to serialize\n");
+    // fflush(stdout);
     
     if (!rsp_msg->SerializeToString(&response->m_pb_data)) {
         response->m_err_code = 5;
@@ -138,7 +139,7 @@ void RpcDispatcher::dispatch(std::shared_ptr<Coro::TinyPBProtocol> request,
         if (ctx) ctx->setFailed(5, "serialize response error");
     } else {
         response->m_err_code = 0;
-        printf("[Provider] Response pb_data size = %ld\n", response->m_pb_data.size());
+        //printf("[Provider] Response pb_data size = %ld\n", response->m_pb_data.size());
         if (ctx) {
             ctx->setErrCode(0);
             ctx->setFinished(true);
@@ -207,20 +208,20 @@ void RpcProvider::registerService(google::protobuf::Service* service) {
  */
 Coro::Task<void> RpcProvider::registerToZk() {
     if (!m_zkClient || !m_zkClient->isConnected()) {
-        printf("[Provider] ZK not connected, skipping registration\n");
-        fflush(stdout);
+        // printf("[Provider] ZK not connected, skipping registration\n");
+        // fflush(stdout);
         co_return;
     }
     
     std::string addr = m_ip + ":" + std::to_string(m_port);
-    printf("[Provider] Registering to ZK with addr: %s\n", addr.c_str());
-    fflush(stdout);
+    // printf("[Provider] Registering to ZK with addr: %s\n", addr.c_str());
+    // fflush(stdout);
     
     // 创建 /rpc 根节点（持久节点）
     auto rootResult = co_await m_zkClient->create("/rpc", "", 0);
     if (!rootResult.ok() && rootResult.rc != ZNODEEXISTS) {
-        printf("[Provider] Failed to create /rpc: %s\n", rootResult.error().c_str());
-        fflush(stdout);
+        // printf("[Provider] Failed to create /rpc: %s\n", rootResult.error().c_str());
+        // fflush(stdout);
     }
     
     for (auto& [service_name, info] : m_dispatcher->getServices()) {
@@ -229,9 +230,9 @@ Coro::Task<void> RpcProvider::registerToZk() {
         // 创建服务节点（持久节点）
         auto svcResult = co_await m_zkClient->create(service_path, "", 0);
         if (!svcResult.ok() && svcResult.rc != ZNODEEXISTS) {
-            printf("[Provider] Failed to create service node %s: %s\n", 
-                   service_path.c_str(), svcResult.error().c_str());
-            fflush(stdout);
+            // printf("[Provider] Failed to create service node %s: %s\n", 
+            //        service_path.c_str(), svcResult.error().c_str());
+            // fflush(stdout);
             continue;
         }
         
@@ -244,19 +245,19 @@ Coro::Task<void> RpcProvider::registerToZk() {
                 method_path, addr, ZOO_EPHEMERAL);
             
             if (!methodResult.ok() && methodResult.rc != ZNODEEXISTS) {
-                printf("[Provider] Failed to create method node %s: %s\n", 
-                       method_path.c_str(), methodResult.error().c_str());
-                fflush(stdout);
+                // printf("[Provider] Failed to create method node %s: %s\n", 
+                //        method_path.c_str(), methodResult.error().c_str());
+                // fflush(stdout);
                 continue;
             }
             
-            printf("[Provider] Registered method: %s -> %s\n", 
-                   method_path.c_str(), addr.c_str());
-            fflush(stdout);
+            // printf("[Provider] Registered method: %s -> %s\n", 
+            //        method_path.c_str(), addr.c_str());
+            // fflush(stdout);
         }
     }
-    printf("[Provider] ZK registration completed\n");
-    fflush(stdout);
+    // printf("[Provider] ZK registration completed\n");
+    // fflush(stdout);
 }
 
 /**
@@ -277,18 +278,21 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
     
     auto localAddr = std::make_shared<Coro::net::IPNetAddr>(m_ip, m_port);
     
+    std::shared_ptr<Coro::TinyPBProtocol> response;
+    std::shared_ptr<RpcContext> ctx;
+    
     while (!m_stop.load()) {
         std::vector<Coro::AbstarcPortocol::s_ptr> msgs;
         auto buffer = stream.getReadBuffer();
         
         try {
-            printf("[Provider] Before readToBuffer, buffer readable=%ld\n", (long)buffer->readAble());
-            fflush(stdout);
+            // printf("[Provider] Before readToBuffer, buffer readable=%ld\n", (long)buffer->readAble());
+            // fflush(stdout);
             
             co_await stream.readToBuffer();
             
-            printf("[Provider] After readToBuffer, buffer readable=%ld\n", (long)buffer->readAble());
-            fflush(stdout);
+            // printf("[Provider] After readToBuffer, buffer readable=%ld\n", (long)buffer->readAble());
+            // fflush(stdout);
             
             if (buffer->readAble() == 0) {
                 // 连接关闭
@@ -296,22 +300,22 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
             }
             
             coder->decode(msgs, buffer);
-            printf("[Provider] Decoded %ld messages\n", (long)msgs.size());
-            fflush(stdout);
+            // printf("[Provider] Decoded %ld messages\n", (long)msgs.size());
+            // fflush(stdout);
             
             for (auto& msg : msgs) {
                 auto request = std::dynamic_pointer_cast<Coro::TinyPBProtocol>(msg);
                 if (!request) {
-                    printf("[Provider] Invalid request\n");
+                    // printf("[Provider] Invalid request\n");
                     continue;
                 }
                 
-                printf("[Provider] Request: method=%s, pb_size=%ld\n", 
-                       request->m_method_name.c_str(), (long)request->m_pb_data.size());
-                fflush(stdout);
+                // printf("[Provider] Request: method=%s, pb_size=%ld\n", 
+                //        request->m_method_name.c_str(), (long)request->m_pb_data.size());
+                // fflush(stdout);
                 
-                auto response = std::make_shared<Coro::TinyPBProtocol>();
-                auto ctx = std::make_shared<RpcContext>();
+                auto response = getProtocol();
+                auto ctx = getContext();
                 ctx->setLocalAddr(localAddr);
                 
                 auto peerAddr = stream.peerAddr();
@@ -320,32 +324,35 @@ Coro::Task<void> RpcProvider::handleClient(Coro::net::TcpStream stream) {
                 }
                 
                 m_dispatcher->dispatch(request, response, ctx);
-                printf("[Provider] dispatch done, err_code=%d\n", response->m_err_code);
-                fflush(stdout);
+                // printf("[Provider] dispatch done, err_code=%d\n", response->m_err_code);
+                // fflush(stdout);
                 
                 std::vector<Coro::AbstarcPortocol::s_ptr> responses;
                 responses.push_back(response);
                 
                 auto out_buf = std::make_shared<Coro::net::TcpBuffer>(1024);
                 coder->encode(responses, out_buf);
-                printf("[Provider] encode done\n");
-                fflush(stdout);
+                // printf("[Provider] encode done\n");
+                // fflush(stdout);
                 
                 std::vector<char> data(out_buf->m_buffer.begin() + out_buf->readIndex(), 
                                out_buf->m_buffer.begin() + out_buf->writeIndex());
-                printf("[Provider] data prepared, size=%ld\n", (long)data.size());
-                fflush(stdout);
+                // printf("[Provider] data prepared, size=%ld\n", (long)data.size());
+                // fflush(stdout);
                 co_await stream.write(data);
-                printf("[Provider] Response written, size=%ld\n", (long)data.size());
-                fflush(stdout);
+                // printf("[Provider] Response written, size=%ld\n", (long)data.size());
+                // fflush(stdout);
             }
+            
+            recycleProtocol(response);
+            recycleContext(ctx);
             
             // 清空读缓冲区，准备接受下一个请求
             buffer->moveReadIndex(buffer->readAble());
             
         } catch (const std::exception& e) {
-            printf("[Provider] exception in handleClient: %s\n", e.what());
-            fflush(stdout);
+            // printf("[Provider] exception in handleClient: %s\n", e.what());
+            // fflush(stdout);
             break;
             break;
         }
@@ -371,10 +378,10 @@ Coro::Task<void> RpcProvider::start() {
     m_client_channel = std::make_unique<Channel<Coro::net::TcpStream>>(100);
     
     // 启动 TCP 服务
-    printf("[Provider] Starting TCP service on port %d...\n", m_port);
+    // printf("[Provider] Starting TCP service on port %d...\n", m_port);
     auto service = co_await Coro::net::start_tcp_service("0.0.0.0", m_port);
     m_tcpService = std::make_unique<Coro::net::TcpService>(std::move(service));
-    printf("[Provider] TCP service started\n");
+    // printf("[Provider] TCP service started\n");
     
     // 连接 ZooKeeper (可选)
     if (!m_zkHost.empty()) {
@@ -388,7 +395,7 @@ Coro::Task<void> RpcProvider::start() {
     }
     
     // 启动多个 worker 协程作为消费者
-    printf("[Provider] Starting %d workers...\n", m_worker_count);
+    //printf("[Provider] Starting %d workers...\n", m_worker_count);
     for (int i = 0; i < m_worker_count; ++i) {
         auto worker = [this, i]() -> Coro::Task<void> {
            fmt::println("[Provider] Worker {} started\n", i);
@@ -396,35 +403,35 @@ Coro::Task<void> RpcProvider::start() {
             while (!m_stop.load()) {
                 try {
                     auto stream = co_await this->m_client_channel->recv();
-                    printf("[Provider] Worker %d: got client fd=%d\n", i, stream.fd());
-                    fflush(stdout);
+                    // printf("[Provider] Worker %d: got client fd=%d\n", i, stream.fd());
+                    // fflush(stdout);
                     co_await this->handleClient(std::move(stream));
-                    printf("[Provider] Worker %d: handleClient finished\n", i);
-                    fflush(stdout);
+                    // printf("[Provider] Worker %d: handleClient finished\n", i);
+                    // fflush(stdout);
                 } catch (const ChannelClosedException& e) {
-                    printf("[Provider] Worker %d: channel closed\n", i);
+                    //printf("[Provider] Worker %d: channel closed\n", i);
                     break;
                 } catch (...) {
-                    printf("[Provider] Worker %d: exception\n", i);
+                   // printf("[Provider] Worker %d: exception\n", i);
                 }
             }
-            printf("[Provider] Worker %d: exiting\n", i);
-            fflush(stdout);
+            // printf("[Provider] Worker %d: exiting\n", i);
+            // fflush(stdout);
         };
         worker().schedule();
     }
     
     // accept 循环作为生产者
-    printf("[Provider] Entering accept loop (producer)\n");
+    //printf("[Provider] Entering accept loop (producer)\n");
     fflush(stdout);
     
     while (!m_stop.load()) {
-        printf("[Provider] Waiting for client connection...\n");
-        fflush(stdout);
+        // printf("[Provider] Waiting for client connection...\n");
+        // fflush(stdout);
         
         auto stream = co_await m_tcpService->accept();
-        printf("[Provider] Producer: got client fd=%d, sending to channel...\n", stream.fd());
-        fflush(stdout);
+        // printf("[Provider] Producer: got client fd=%d, sending to channel...\n", stream.fd());
+        // fflush(stdout);
         
         // 发送到 Channel (生产者) - 使用异步send
         co_await m_client_channel->send(std::move(stream));

@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-18 16:22:43
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-18 18:01:15
+ * @LastEditTime: 2026-04-12 21:55:29
  * @FilePath: /MCoroRpc/src/tinypb_coder.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -60,7 +60,7 @@ namespace Coro {
                     if(tmp[i]==TinyPBProtocol::PB_START){
                         if(i+1<buf->writeIndex()){
                             pk_len=getInt32FromNetByte(&tmp[i+1]);
-                            fmt::println("get pk_lne ={}",pk_len);
+                            //fmt::println("get pk_lne ={}",pk_len);
 
                             int j=i+pk_len-1;
                             if(j>buf->writeIndex()){
@@ -76,7 +76,7 @@ namespace Coro {
                     }
                 }
                 if(i>=buf->writeIndex()){
-                    fmt::println("Decode end,read full data");
+                    //fmt::println("Decode end,read full data");
                     return;
                 }
 
@@ -88,11 +88,11 @@ namespace Coro {
                     int mgs_id_len_index=start_index+sizeof(char)+sizeof(message->m_pk_len);
                     if(mgs_id_len_index>=end_index){
                         message->parse_sucess=false;
-                        fmt::println("parse error,msg_id_len_index{}>=end_index{}",mgs_id_len_index,end_index);
+                        //fmt::println("parse error,msg_id_len_index{}>=end_index{}",mgs_id_len_index,end_index);
                         continue;
                     }
                     message->m_msg_id_len=getInt32FromNetByte(&tmp[mgs_id_len_index]);
-                    fmt::println("get msg_id_len{}",message->m_msg_id_len);
+                    //fmt::println("get msg_id_len{}",message->m_msg_id_len);
 
                     int msg_id_index=mgs_id_len_index+sizeof(message->m_msg_id_len);
 
@@ -100,13 +100,13 @@ namespace Coro {
                     memcpy(&msg_id[0],&tmp[msg_id_index],message->m_msg_id_len);
                     message->m_msg_id=std::string(msg_id);
 
-                    fmt::println("msg id{}",msg_id);
+                    //fmt::println("msg id{}",msg_id);
 
 
                     int method_name_len_index=msg_id_index+message->m_msg_id_len;
                     if(method_name_len_index>=end_index){
                        message->parse_sucess=false;
-                        fmt::println("parse error,method_name_index{}>=end_index{}",method_name_len_index,end_index);
+                        //fmt::println("parse error,method_name_index{}>=end_index{}",method_name_len_index,end_index);
                         continue;
                     }
                     message->m_method_name_len=getInt32FromNetByte(&tmp[method_name_len_index]);
@@ -116,13 +116,13 @@ namespace Coro {
                     char method_name[512] = {0};
                     memcpy(&method_name[0],&tmp[method_name_index],message->m_method_name_len);
                     message->m_method_name=std::string(method_name);
-                    fmt::println("get method_name{}",method_name);
+                    //fmt::println("get method_name{}",method_name);
                     
 
                     int error_code_index=method_name_index+message->m_method_name_len;
                     if(error_code_index>=end_index){
                         parse_success=false;
-                         fmt::println("parse error,error_code_index{}>=end_index{}",error_code_index,end_index);
+                         //fmt::println("parse error,error_code_index{}>=end_index{}",error_code_index,end_index);
                         continue;
                     }
                     message->m_err_code=getInt32FromNetByte(&tmp[error_code_index]);
@@ -130,7 +130,7 @@ namespace Coro {
                     int err_info_len_index=error_code_index+sizeof(message->m_err_code);
                      if(err_info_len_index>=end_index){
                         parse_success=false;
-                         fmt::println("parse error,error_info_len_index{}>=end_index{}",err_info_len_index,end_index);
+                         //fmt::println("parse error,error_info_len_index{}>=end_index{}",err_info_len_index,end_index);
                         continue;
                     }
                     message->m_err_info_len=getInt32FromNetByte(&tmp[err_info_len_index]);
@@ -140,7 +140,7 @@ namespace Coro {
                     char error_info[512] = {0};
                     memcpy(&error_info[0], &tmp[err_info_index], message->m_err_info_len);
                     message->m_err_info = std::string(error_info);
-                    fmt::println("get error infd {}",error_info);
+                   // fmt::println("get error infd {}",error_info);
 
                     int pb_data_len=message->m_pk_len-message->m_err_info_len-message->m_msg_id_len-message->m_method_name_len-26;
                     int pd_data_index = err_info_index + message->m_err_info_len;

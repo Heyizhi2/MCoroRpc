@@ -103,15 +103,15 @@ inline Task<void> RpcChannel::connect() {
     if (!ip_addr) {
         throw std::runtime_error("invalid address");
     }
-    printf("[Channel] Connecting to %s:%d\n", ip_addr->ip().c_str(), ip_addr->port());
+    //printf("[Channel] Connecting to %s:%d\n", ip_addr->ip().c_str(), ip_addr->port());
     auto stream = co_await net::connect(ip_addr->ip(), ip_addr->port());
     m_stream = std::make_unique<net::TcpStream>(std::move(stream));
     m_connected.store(true);
     m_reconnect_retry = 0;
     
     if (!m_worker_running.exchange(true)) {
-        printf("[Channel] Starting workerLoop from connect()\n");
-        fflush(stdout);
+        // printf("[Channel] Starting workerLoop from connect()\n");
+        // fflush(stdout);
         // 不等待 workerLoop，让它在后台运行
         auto worker = [this]() -> Task<void> {
             co_await workerLoop();
@@ -158,8 +158,8 @@ inline Task<void> RpcChannel::reconnect() {
 }
 
 inline void RpcChannel::close() {
-    printf("[Channel] close() called\n");
-    fflush(stdout);
+    // printf("[Channel] close() called\n");
+    // fflush(stdout);
     
     // 1. 先停止接收新请求
     m_stopped.store(true);
@@ -176,19 +176,19 @@ inline void RpcChannel::close() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         wait_count++;
     }
-    printf("[Channel] close() waited %d iterations\n", wait_count);
-    fflush(stdout);
+    // printf("[Channel] close() waited %d iterations\n", wait_count);
+    // fflush(stdout);
     
     // 4. 最后关闭 stream
     if (m_stream && m_stream->fd() >= 0) {
-        printf("[Channel] close stream\n");
-        fflush(stdout);
+        // printf("[Channel] close stream\n");
+        // fflush(stdout);
         m_stream->close();
         m_stream.reset();
     }
     m_connected.store(false);
-    printf("[Channel] close() done\n");
-    fflush(stdout);
+    // printf("[Channel] close() done\n");
+    // fflush(stdout);
 }
 
 inline void notifyRequestFailed(RpcRequest& req, const std::string& error) {
@@ -198,12 +198,12 @@ inline void notifyRequestFailed(RpcRequest& req, const std::string& error) {
 
 inline Task<void> RpcChannel::workerLoop() {
     auto channel = shared_from_this();
-        printf("[Channel] workerLoop started\n");
-        fflush(stdout);
+        // printf("[Channel] workerLoop started\n");
+        // fflush(stdout);
         
         while (!m_stopped.load()) {
         if (!m_connected.load()) {
-            printf("[Channel] not connected, attempting reconnect\n");
+            //printf("[Channel] not connected, attempting reconnect\n");
             co_await reconnect();
             if (!m_connected.load()) {
                 break;
@@ -211,22 +211,22 @@ inline Task<void> RpcChannel::workerLoop() {
         }
         
         RpcRequest req;
-        printf("[Channel] waiting for request from channel...\n");
-        fflush(stdout);
+        // printf("[Channel] waiting for request from channel...\n");
+        // fflush(stdout);
         try {
             // Direct recv without wait_for to test channel
-            printf("[Channel] before recv...\n");
-            fflush(stdout);
+           // printf("[Channel] before recv...\n");
+            //fflush(stdout);
             req = co_await m_request_chan->recv();
-            printf("[Channel] received request: method=%s\n", req.req->m_method_name.c_str());
+            //printf("[Channel] received request: method=%s\n", req.req->m_method_name.c_str());
         } catch (const Coro::ChannelClosedException& e) {
-            printf("[Channel] channel closed: %s\n", e.what());
+            //printf("[Channel] channel closed: %s\n", e.what());
             break;
         } catch (const std::exception& e) {
-            printf("[Channel] exception in recv: %s\n", e.what());
+            //printf("[Channel] exception in recv: %s\n", e.what());
             break;
         } catch (...) {
-            printf("[Channel] unknown exception in recv\n");
+            //printf("[Channel] unknown exception in recv\n");
             break;
         }
         
@@ -234,8 +234,8 @@ inline Task<void> RpcChannel::workerLoop() {
         
         // 检查 stream 是否有效
         if (!m_stream || m_stream->fd() < 0) {
-            printf("[Channel] stream not valid, skipping\n");
-            fflush(stdout);
+            // printf("[Channel] stream not valid, skipping\n");
+            // fflush(stdout);
             notifyRequestFailed(req, "connection closed");
             continue;
         }
@@ -250,16 +250,16 @@ inline Task<void> RpcChannel::workerLoop() {
         std::vector<char> data(out_buf->m_buffer.begin() + out_buf->readIndex(),
                                out_buf->m_buffer.begin() + out_buf->writeIndex());
         
-            printf("[Channel] About to write %ld bytes, fd=%d\n", (long)data.size(), m_stream->fd());
-            fflush(stdout);
+            // printf("[Channel] About to write %ld bytes, fd=%d\n", (long)data.size(), m_stream->fd());
+            // fflush(stdout);
             
             try {
                 auto write_task = m_stream->write(data);
-                printf("[Channel] Before write await...\n");
-                fflush(stdout);
+                // printf("[Channel] Before write await...\n");
+                // fflush(stdout);
                 auto write_result = co_await wait_for(std::move(write_task), std::chrono::milliseconds(timeout_ms));
-                printf("[Channel] write_result ok=%d, timeout=%d\n", write_result.ok, write_result.is_timeout);
-                fflush(stdout);
+                // printf("[Channel] write_result ok=%d, timeout=%d\n", write_result.ok, write_result.is_timeout);
+                // fflush(stdout);
                 
                 if (!write_result.ok) {
                     m_connected.store(false);
@@ -277,30 +277,30 @@ inline Task<void> RpcChannel::workerLoop() {
                 continue;
             }
             
-            printf("[Channel] Write done, waiting for response...\n");
-            fflush(stdout);
+            // printf("[Channel] Write done, waiting for response...\n");
+            // fflush(stdout);
             
             auto read_task = m_stream->readToBuffer();
-            printf("[Channel] before wait_for read...\n");
-            fflush(stdout);
+            // printf("[Channel] before wait_for read...\n");
+            // fflush(stdout);
             auto read_result = co_await wait_for(std::move(read_task), std::chrono::milliseconds(timeout_ms));
-            printf("[Channel] wait_for read returned, ok=%d, timeout=%d, readable=%ld\n", 
-                   read_result.ok, read_result.is_timeout, (long)m_stream->getReadBuffer()->readAble());
-            fflush(stdout);
+            // printf("[Channel] wait_for read returned, ok=%d, timeout=%d, readable=%ld\n", 
+            //        read_result.ok, read_result.is_timeout, (long)m_stream->getReadBuffer()->readAble());
+            // fflush(stdout);
             
             if (read_result.ok && !read_result.is_timeout && m_stream->getReadBuffer()->readAble() > 0) {
                 auto in_buf = m_stream->getReadBuffer();
                 std::vector<AbstarcPortocol::s_ptr> rsp_msgs;
-                printf("[Channel] About to decode response...\n");
-                fflush(stdout);
+                // printf("[Channel] About to decode response...\n");
+                // fflush(stdout);
                 coder.decode(rsp_msgs, in_buf);
-                printf("[Channel] Decoded %ld response messages\n", (long)rsp_msgs.size());
-                fflush(stdout);
+                // printf("[Channel] Decoded %ld response messages\n", (long)rsp_msgs.size());
+                // fflush(stdout);
             } else {
-                printf("[Channel] Read result not ready: ok=%d, timeout=%d, readable=%ld\n",
-                       read_result.ok, read_result.is_timeout, 
-                       (long)(m_stream ? m_stream->getReadBuffer()->readAble() : -1));
-                fflush(stdout);
+                // printf("[Channel] Read result not ready: ok=%d, timeout=%d, readable=%ld\n",
+                //        read_result.ok, read_result.is_timeout, 
+                //        (long)(m_stream ? m_stream->getReadBuffer()->readAble() : -1));
+                // fflush(stdout);
             }
             
             if (!read_result.ok) {
@@ -320,45 +320,45 @@ inline Task<void> RpcChannel::workerLoop() {
             }
             
             auto in_buf = m_stream->getReadBuffer();
-            printf("[Channel] read buffer readable=%ld, writeIndex=%ld\n", 
-                   in_buf->readAble(), in_buf->writeIndex());
+            //printf("[Channel] read buffer readable=%ld, writeIndex=%ld\n", 
+                   //in_buf->readAble(), in_buf->writeIndex());
             
             std::vector<AbstarcPortocol::s_ptr> rsp_msgs;
             coder.decode(rsp_msgs, in_buf);
             
-            printf("[Channel] after decode, rsp_msgs size=%ld\n", rsp_msgs.size());
+          //  printf("[Channel] after decode, rsp_msgs size=%ld\n", rsp_msgs.size());
             
             if (rsp_msgs.empty()) {
-                printf("[Channel] decode response failed, empty result\n");
+              //  printf("[Channel] decode response failed, empty result\n");
                 notifyRequestFailed(req, "decode response failed");
                 continue;
             }
             
             auto rsp = std::dynamic_pointer_cast<TinyPBProtocol>(rsp_msgs[0]);
             if (!rsp) {
-                printf("[Channel] invalid response protocol\n");
+               // printf("[Channel] invalid response protocol\n");
                 notifyRequestFailed(req, "invalid response protocol");
                 continue;
             }
 
-            printf("[Channel] Response: err_code=%d, err_info=%s, pb_data_size=%ld\n", 
-                   rsp->m_err_code, rsp->m_err_info.c_str(), rsp->m_pb_data.size());
-            printf("[Channel] Response pb_data hex: ");
+           // printf("[Channel] Response: err_code=%d, err_info=%s, pb_data_size=%ld\n", 
+                   //rsp->m_err_code, rsp->m_err_info.c_str(), rsp->m_pb_data.size());
+           // printf("[Channel] Response pb_data hex: ");
             for (size_t i = 0; i < std::min((size_t)20, rsp->m_pb_data.size()); i++) {
-                printf("%02x ", (unsigned char)rsp->m_pb_data[i]);
+               // printf("%02x ", (unsigned char)rsp->m_pb_data[i]);
             }
-            printf("\n");
+           // printf("\n");
 
             if (!req.response->ParseFromString(rsp->m_pb_data)) {
-                printf("[Channel] ParseFromString failed\n");
+               // printf("[Channel] ParseFromString failed\n");
                 notifyRequestFailed(req, "parse response failed");
             } else if (rsp->m_err_code != 0) {
-                printf("[Channel] Setting error code=%d, info=%s\n", rsp->m_err_code, rsp->m_err_info.c_str());
+               // printf("[Channel] Setting error code=%d, info=%s\n", rsp->m_err_code, rsp->m_err_info.c_str());
                 req.controller->SetErrorCode(rsp->m_err_code);
                 req.controller->SetFailed(rsp->m_err_info);
                 if (req.done) req.done->Run();
             } else {
-                printf("[Channel] Setting finished=true\n");
+                // printf("[Channel] Setting finished=true\n");
                 req.controller->SetFinished(true);
                 if (req.done) req.done->Run();
             }
@@ -405,8 +405,8 @@ inline void RpcChannel::CallMethod(const google::protobuf::MethodDescriptor* met
         return;
     }
     
-    printf("[Channel] CallMethod: method=%s, msg_id=%s, pb_data_size=%ld\n", 
-           req->m_method_name.c_str(), req->m_msg_id.c_str(), req->m_pb_data.size());
+    // printf("[Channel] CallMethod: method=%s, msg_id=%s, pb_data_size=%ld\n", 
+    //        req->m_method_name.c_str(), req->m_msg_id.c_str(), req->m_pb_data.size());
 
     RpcRequest rpc_req;
     rpc_req.req = req;
@@ -441,58 +441,52 @@ inline Task<void> RpcChannel::CallMethodAsync(
         co_return;
     }
     
-    auto req = std::make_shared<TinyPBProtocol>();
+    auto req = getProtocol();
     req->m_method_name = method->full_name();
     req->m_msg_id = ctrl->GetMsgId();
     
     if (!request->SerializeToString(&req->m_pb_data)) {
         ctrl->SetFailed("serialize request failed");
         if (done) done->Run();
+        recycleProtocol(req);
         co_return;
     }
     
-    // 直接发送和接收，不经过 workerLoop
-    printf("[Channel] CallMethodAsync: m_stream=%p, fd=%d\n", m_stream.get(), m_stream ? m_stream->fd() : -1);
-    fflush(stdout);
-    
-    TinyPBCoder coder;
     std::vector<AbstarcPortocol::s_ptr> req_msgs;
     req_msgs.push_back(req);
     
     auto out_buf = std::make_shared<net::TcpBuffer>(1024);
-    coder.encode(req_msgs, out_buf);
+    m_coder.encode(req_msgs, out_buf);
     
     std::vector<char> data(out_buf->m_buffer.begin() + out_buf->readIndex(),
                            out_buf->m_buffer.begin() + out_buf->writeIndex());
     
-    printf("[Channel] About to write %ld bytes, fd=%d\n", (long)data.size(), m_stream->fd());
-    fflush(stdout);
+    // printf("[Channel] About to write %ld bytes, fd=%d\n", (long)data.size(), m_stream->fd());
+    // fflush(stdout);
     
     // 写入数据
     auto writeTask = m_stream->write(data);
-    printf("[Channel] Before co_await write\n");
-    fflush(stdout);
+    // printf("[Channel] Before co_await write\n");
+    // fflush(stdout);
     co_await writeTask;
-    printf("[Channel] Write done, readable=%ld\n", (long)m_stream->getReadBuffer()->readAble());
-    fflush(stdout);
+    // printf("[Channel] Write done, readable=%ld\n", (long)m_stream->getReadBuffer()->readAble());
+    // fflush(stdout);
     
     // 读取响应
-    printf("[Channel] Before readToBuffer...\n");
-    fflush(stdout);
+    // printf("[Channel] Before readToBuffer...\n");
+    // fflush(stdout);
     co_await m_stream->readToBuffer();
-    printf("[Channel] After readToBuffer, readable=%ld\n", (long)m_stream->getReadBuffer()->readAble());
-    fflush(stdout);
+    // printf("[Channel] After readToBuffer, readable=%ld\n", (long)m_stream->getReadBuffer()->readAble());
+    // fflush(stdout);
     
     auto in_buf = m_stream->getReadBuffer();
     std::vector<AbstarcPortocol::s_ptr> rsp_msgs;
-    printf("[Channel] About to decode...\n");
-    fflush(stdout);
-    coder.decode(rsp_msgs, in_buf);
-    printf("[Channel] Decoded %ld messages\n", (long)rsp_msgs.size());
+    m_coder.decode(rsp_msgs, in_buf);
     
     if (rsp_msgs.empty()) {
         ctrl->SetFailed("decode response failed");
         if (done) done->Run();
+        recycleProtocol(req);
         co_return;
     }
     
@@ -500,6 +494,7 @@ inline Task<void> RpcChannel::CallMethodAsync(
     if (!rsp) {
         ctrl->SetFailed("invalid response");
         if (done) done->Run();
+        recycleProtocol(req);
         co_return;
     }
     
@@ -512,6 +507,9 @@ inline Task<void> RpcChannel::CallMethodAsync(
     
     ctrl->SetFinished(true);
     if (done) done->Run();
+    
+    recycleProtocol(req);
+    recycleProtocol(rsp);
 }
 
 inline void RpcChannel::initController(google::protobuf::RpcController* controller) {

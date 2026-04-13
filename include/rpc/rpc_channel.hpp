@@ -17,6 +17,8 @@
 #include "../coro/channel.hpp"
 #include "../net/tcpstream.hpp"
 #include "../coder/tinypb_protocol.hpp"
+#include "../coder/tinypb_coder.hpp"
+#include "../utils/object_pool.hpp"
 #include "rpc_context.h"
 
 namespace Coro {
@@ -105,6 +107,7 @@ private:
     std::atomic<bool> m_connected{false};
     int m_timeout_ms = 3000;
 
+    TinyPBCoder m_coder;
     Channel<RpcRequest>::s_ptr m_request_chan;
     std::atomic<bool> m_worker_running{false};
     std::atomic<bool> m_stopped{false};

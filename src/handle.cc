@@ -15,6 +15,12 @@ namespace Coro {
         }
     }
 
+    void CoroHandle::scheduleOn(Eventloop& loop) {
+        if (m_state == Handle::State::UNSCHEDULE) {
+            loop.call_soon(*this, [this]() { this->run(); });
+        }
+    }
+
     void CoroHandle::cancel() noexcept {
         Handle::cancel();
     }

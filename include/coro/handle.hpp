@@ -20,6 +20,7 @@
 #include <vector>
 
 namespace Coro {
+    class Eventloop;
     /**
      * @brief 协程句柄基类
      * @details 所有可调度对象的抽象基类，包括协程、定时器等
@@ -110,11 +111,17 @@ namespace Coro {
          */
         virtual void traceback(int depth) = 0;
         
-        /**
+         /**
          * @brief 调度协程执行
          * @details 将协程加入事件循环的就绪队列，等待执行
          */
         void schedule();
+        
+        /**
+         * @brief 调度协程到指定事件循环
+         * @param loop 指定的事件循环
+         */
+        void scheduleOn(Eventloop& loop);
         
         /**
          * @brief 取消协程执行

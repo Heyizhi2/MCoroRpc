@@ -94,6 +94,16 @@ namespace Coro {
         void run_until_complete();
         
         /**
+         * @brief 停止事件循环
+         */
+        void stop();
+        
+        /**
+         * @brief 检查是否已停止
+         */
+        bool isStopped() const { return m_stop.load(); }
+        
+        /**
          * @brief 取消特定的等待操作
          * @param wait_id 等待操作ID
          * @return 如果存在则返回被取消的回调，否则返回空
@@ -123,10 +133,10 @@ namespace Coro {
         private:
         /**
          * @brief 检查事件循环是否应停止
-         * @return true 表示应停止（无更多任务）
+         * @return true 表示应停止（无更多任务或已收到停止信号）
          */
         bool is_stop(){
-            return m_ready_queue.empty() && m_scheduled.empty() && m_epoll.is_stop() && m_coro_waits.empty();
+            return m_stop.load() || (m_ready_queue.empty() && m_scheduled.empty() && m_epoll.is_stop() && m_coro_waits.empty());
         }
         
         bool has_pending_coroutines() const {
@@ -134,7 +144,7 @@ namespace Coro {
         }
         
         /**
-         * @brief 执行一次事件循环
+         * @brief 执行一次事件循环迭代
          * @details 处理IO事件、定时器和就绪回调
          */
         void run_once();
@@ -146,13 +156,13 @@ namespace Coro {
         void process_epoll_event(int timeout);
 
          /**
-          * @brief 处理超时的定时器
-          */
+           * @brief 处理超时的定时任务
+           */
         void process_expired_timeout();
 
          /**
-          * @brief 执行就绪队列中的回调
-          */
+           * @brief 执行就绪队列中的回调
+           */
         void execute_ready_callback();
 
         /** @brief 等待信息结构体 */
@@ -183,13 +193,16 @@ namespace Coro {
         /** @brief 定时器堆，按时间排序的等待任务 */
         std::vector<std::pair<uint64_t, types::TimePoint>> m_scheduled;
         
+        /** @brief 停止标志 */
+        std::atomic<bool> m_stop{false};
+        
         /** @brief Epoll IO多路复用器 */
         Epoll m_epoll{};
     };
     
     /**
-     * @brief 获取全局事件循环单例
-     * @return 事件循环引用
+     * @brief 获取当前线程的事件循环
+     * @return 事件循环引用（thread_local）
      */
     Eventloop &get_event_loop();
 }

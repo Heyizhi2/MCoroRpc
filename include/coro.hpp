@@ -10,6 +10,7 @@
 #include "coro/handle.hpp"
 #include "coro/timer.hpp"
 #include "coro/event_loop.hpp"
+#include "coro/event_loop_pool.hpp"
 #include "coro/task.hpp"
 #include "coro/sleep.hpp"
 #include "coro/channel.hpp"

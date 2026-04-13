@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <utility>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include "ioawaiter.hpp"
 #include "tcpstream.hpp"
 
@@ -89,6 +90,8 @@ namespace Coro {
                     int client_fd = accept4(m_listen_fd, reinterpret_cast<sockaddr*>(&remote_addr),
                                             &addrlen, SOCK_NONBLOCK | SOCK_CLOEXEC);
                     if (client_fd >= 0) {
+                        int nodelay = 1;
+                        ::setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
                         co_return TcpStream{client_fd};
                     }
                     if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -137,7 +140,8 @@ namespace Coro {
                     continue;
                 }
                 int opt=1;
-                ::setsockopt(listenfd, SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
+                ::setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+                ::setsockopt(listenfd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
                 if(::bind(listenfd,p->ai_addr,p->ai_addrlen)==0){
                     break;
                 }

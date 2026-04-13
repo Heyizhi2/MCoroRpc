@@ -178,7 +178,7 @@ private:
     
     // MPMC 模式：生产者-消费者
     std::unique_ptr<Channel<Coro::net::TcpStream>> m_client_channel;  ///< 客户端连接通道
-    int m_worker_count = 1;                                  ///< worker 协程数量
+    int m_worker_count = 4;                                  ///< worker 协程数量
     
     std::atomic<bool> m_stop{true};                         ///< 停止标志
     bool m_started = false;                                ///< 启动状态标志

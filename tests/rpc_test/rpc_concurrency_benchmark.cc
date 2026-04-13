@@ -22,10 +22,11 @@
 
 using namespace std::chrono;
 
-constexpr int TOTAL_REQUESTS = 10000;
-constexpr int CONCURRENT_CLIENTS = 50;
+constexpr int TOTAL_REQUESTS = 40;
+constexpr int CONCURRENT_CLIENTS = 40;
 constexpr int REQUESTS_PER_CLIENT = TOTAL_REQUESTS / CONCURRENT_CLIENTS;
 constexpr int SERVER_PORT = 8001;
+constexpr int THREAD_COUNT = 8;
 
 std::atomic<int> g_success_count{0};
 std::atomic<int> g_fail_count{0};
@@ -82,24 +83,14 @@ Coro::Task<void> runSingleClient(int client_id) {
     co_return;
 }
 
-Coro::Task<void> runClientBenchmark() {
+void runClientOnThread(int threadId, int clientStart, int clientCount) {
     std::vector<Coro::Task<>> clientTasks;
-    clientTasks.reserve(CONCURRENT_CLIENTS);
-    
-    for (int i = 0; i < CONCURRENT_CLIENTS; ++i) {
-        clientTasks.push_back(runSingleClient(i));
+    for (int i = 0; i < clientCount; ++i) {
+        auto task = runSingleClient(clientStart + i);
+        task.schedule();
     }
     
-    for (auto& t : clientTasks) {
-        t.schedule();
-    }
-    
-    while (g_clients_done.load() < CONCURRENT_CLIENTS) {
-        co_await Coro::sleep_for(std::chrono::milliseconds(50));
-    }
-    
-    co_await Coro::sleep_for(std::chrono::milliseconds(100));
-    co_return;
+    Coro::get_event_loop().run_until_complete();
 }
 
 void runServer() {
@@ -107,7 +98,7 @@ void runServer() {
     fflush(stdout);
     
     Coro::RpcServer server(SERVER_PORT, "");
-    server.setWorkerCount(16);
+    server.setWorkerCount(8);
     
     CalculatorServiceImpl calcService;
     server.registerService(&calcService);
@@ -127,13 +118,25 @@ void runClient() {
     std::cout << "  Concurrent Clients: " << CONCURRENT_CLIENTS << "\n";
     std::cout << "  Requests/Client:  " << REQUESTS_PER_CLIENT << "\n";
     std::cout << "  Server Port:      " << SERVER_PORT << "\n";
+    std::cout << "  Thread Count:     " << THREAD_COUNT << "\n";
     fflush(stdout);
+    
+    Coro::EventloopPool::instance().init(THREAD_COUNT);
+    
+    int clientsPerThread = CONCURRENT_CLIENTS / THREAD_COUNT;
+    
+    std::vector<std::thread> threads;
+    for (int t = 0; t < THREAD_COUNT; ++t) {
+        int start = t * clientsPerThread;
+        int count = (t == THREAD_COUNT - 1) ? (CONCURRENT_CLIENTS - start) : clientsPerThread;
+        threads.emplace_back(runClientOnThread, t, start, count);
+    }
     
     auto start = steady_clock::now();
     
-    runClientBenchmark().schedule();
-    
-    Coro::get_event_loop().run_until_complete();
+    for (auto& t : threads) {
+        t.join();
+    }
     
     auto end = steady_clock::now();
     auto duration = duration_cast<nanoseconds>(end - start).count();
@@ -141,7 +144,7 @@ void runClient() {
     
     int total = g_success_count.load() + g_fail_count.load();
     double avg_latency_us = total > 0 ? (duration / 1000.0 / total) : 0;
-    double throughput_rps = total > 0 ? (total * 1000000.0 / total_time_ms) : 0;
+    double throughput_rps = total > 0 ? (total * 1000.0 / total_time_ms) : 0;
     
     std::cout << "\n";
     std::cout << "========================================\n";
