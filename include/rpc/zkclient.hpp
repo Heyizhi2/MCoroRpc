@@ -117,7 +117,7 @@ public:
      * @param path 节点路径
      * @return 协程Task，操作结果(包含数据)
      */
-    Coro::Task<ZkResult> getData(const std::string& path);
+Coro::Task<ZkResult> getData(const std::string& path, bool watch = false);
     
     /**
      * @brief 设置节点数据
@@ -139,9 +139,24 @@ public:
     /**
      * @brief 获取子节点列表
      * @param path 节点路径
+     * @param watch 是否注册 watch，默认为 false
      * @return 协程Task，操作结果(子节点列表在data字段中，用逗号分隔)
      */
-    Coro::Task<ZkResult> getChildren(const std::string& path);
+    Coro::Task<ZkResult> getChildren(const std::string& path, bool watch = false);
+    
+    /**
+     * @brief 设置节点数据变化回调
+     * @param path 节点路径
+     * @param callback 回调函数，参数为节点新数据
+     */
+    void setDataWatcher(const std::string& path, std::function<void(const std::string&)> callback);
+    
+    /**
+     * @brief 设置子节点列表变化回调
+     * @param path 节点路径
+     * @param callback 回调函数，参数为子节点列表
+     */
+    void setChildrenWatcher(const std::string& path, std::function<void(const std::vector<std::string>&)> callback);
     
     /**
      * @brief 关闭连接
@@ -217,6 +232,12 @@ private:
 
     std::mutex m_pendingMutex;                          ///< 保护待操作列表的互斥锁
     std::vector<PendingOp*> m_pendingOps;               ///< 待处理的异步操作列表
+    
+    std::mutex m_watcherMutex;                         ///< 保护 watcher 回调
+    std::map<std::string, std::function<void(const std::string&)>> m_dataWatchers;  ///< 数据变化 watcher
+    std::map<std::string, std::function<void(const std::vector<std::string>&)>> m_childrenWatchers;  ///< 子节点变化 watcher
+    
+    void processWatcher(int type, int state, const char* path);  ///< 处理 watch 回调
 };
 
 }  // namespace AlphaMin

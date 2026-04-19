@@ -203,61 +203,36 @@ void RpcProvider::registerService(google::protobuf::Service* service) {
 
 /**
  * @brief 将服务注册到 ZooKeeper
- * @details 在 ZooKeeper 中创建临时顺序节点，路径格式: /rpc/service_name/method_name/ip:port
+ * @details 使用新的路径结构: /rpc/services/{service_name}
+ *        值格式: {addr}#{timestamp}
  * @return 协程Task
  */
 Coro::Task<void> RpcProvider::registerToZk() {
     if (!m_zkClient || !m_zkClient->isConnected()) {
-        // printf("[Provider] ZK not connected, skipping registration\n");
-        // fflush(stdout);
         co_return;
     }
     
     std::string addr = m_ip + ":" + std::to_string(m_port);
-    // printf("[Provider] Registering to ZK with addr: %s\n", addr.c_str());
-    // fflush(stdout);
+    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::string value = addr + "#" + std::to_string(now);
     
-    // 创建 /rpc 根节点（持久节点）
-    auto rootResult = co_await m_zkClient->create("/rpc", "", 0);
-    if (!rootResult.ok() && rootResult.rc != ZNODEEXISTS) {
-        // printf("[Provider] Failed to create /rpc: %s\n", rootResult.error().c_str());
-        // fflush(stdout);
-    }
+    // 创建 /rpc/services 根节点
+    auto rootResult = co_await m_zkClient->create("/rpc/services", "", 0);
     
+    // 为每个服务创建节点
     for (auto& [service_name, info] : m_dispatcher->getServices()) {
-        std::string service_path = "/rpc/" + service_name;
+        std::string service_path = "/rpc/services/" + service_name;
         
-        // 创建服务节点（持久节点）
-        auto svcResult = co_await m_zkClient->create(service_path, "", 0);
-        if (!svcResult.ok() && svcResult.rc != ZNODEEXISTS) {
-            // printf("[Provider] Failed to create service node %s: %s\n", 
-            //        service_path.c_str(), svcResult.error().c_str());
-            // fflush(stdout);
-            continue;
+        auto svcResult = co_await m_zkClient->setData(service_path, value);
+        if (!svcResult.ok()) {
+            svcResult = co_await m_zkClient->create(service_path, value, 0);
         }
         
-        // 为每个方法创建节点，存储服务地址
-        for (const auto& method_name : info.methods) {
-            std::string method_path = service_path + "/" + method_name;
-            
-            // 使用临时节点，这样服务下线时自动删除
-            auto methodResult = co_await m_zkClient->create(
-                method_path, addr, ZOO_EPHEMERAL);
-            
-            if (!methodResult.ok() && methodResult.rc != ZNODEEXISTS) {
-                // printf("[Provider] Failed to create method node %s: %s\n", 
-                //        method_path.c_str(), methodResult.error().c_str());
-                // fflush(stdout);
-                continue;
-            }
-            
-            // printf("[Provider] Registered method: %s -> %s\n", 
-            //        method_path.c_str(), addr.c_str());
-            // fflush(stdout);
+        if (svcResult.ok()) {
+            m_registered = true;
         }
     }
-    // printf("[Provider] ZK registration completed\n");
-    // fflush(stdout);
 }
 
 /**
@@ -387,10 +362,33 @@ Coro::Task<void> RpcProvider::start() {
     if (!m_zkHost.empty()) {
         m_zkClient->setHost(m_zkHost);
         auto connResult = co_await m_zkClient->start();
+        // fprintf(stderr, "[Provider] ZK connect: rc=%d\n", connResult.rc);
         
         // 注册到 ZooKeeper
         if (connResult.ok()) {
             co_await registerToZk();
+            
+            // 启动心跳协程
+            if (m_registered) {
+                auto heartbeatTask = [this]() -> Coro::Task<void> {
+                    std::string addr = m_ip + ":" + std::to_string(m_port);
+                    while (!m_stop.load() && m_registered) {
+                        co_await Coro::sleep_for(std::chrono::milliseconds(m_heartbeatIntervalMs));
+                        if (m_stop.load() || !m_registered) break;
+                        
+                        // 更新所有服务节点的心跳
+                        auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+                        std::string value = addr + "#" + std::to_string(now);
+                        
+                        for (auto& [service_name, info] : m_dispatcher->getServices()) {
+                            std::string service_path = "/rpc/services/" + service_name;
+                            auto result = co_await m_zkClient->setData(service_path, value);
+                        }
+                    }
+                };
+                heartbeatTask().schedule();
+            }
         }
     }
     
@@ -448,6 +446,23 @@ Coro::Task<void> RpcProvider::start() {
  */
 void RpcProvider::stop() {
     m_stop.store(true);
+    m_registered = false;
+    
+    // 从 ZK 删除注册的节点（使用临时协程）
+    if (m_zkClient && m_zkClient->isConnected()) {
+        auto unregTask = [this]() -> Coro::Task<void> {
+            for (auto& [service_name, info] : m_dispatcher->getServices()) {
+                std::string service_path = "/rpc/services/" + service_name;
+                auto result = co_await m_zkClient->deleteNode(service_path);
+                // fprintf(stderr, "[Provider] Unregistered: %s, rc=%d\n", service_path.c_str(), result.rc);
+            }
+        };
+        unregTask().schedule();
+        
+        // 等待一小段时间让协程执行
+        usleep(100000);
+    }
+    
     // 先关闭 channel，让 worker 退出 recv
     if (m_client_channel) {
         m_client_channel->close();
@@ -520,15 +535,32 @@ Coro::Task<std::string> ServiceDiscovery::discover(const std::string& service_na
         co_return std::string();
     }
     
-    std::string path = "/rpc/" + service_name + "/" + method_name;
-    auto result = co_await m_zkClient->getData(path);
+    std::string path = "/rpc/services/" + service_name;
+    auto result = co_await m_zkClient->getData(path, false);
     
     if (!result.ok()) {
         co_return std::string();
     }
     
+    // 解析地址（去掉 timestamp）
     std::string data = std::move(result.data);
+    auto pos = data.find('#');
+    if (pos != std::string::npos) {
+        data = data.substr(0, pos);
+    }
     co_return data;
+}
+
+/**
+ * @brief 获取服务节点数据
+ */
+Coro::Task<ZkResult> ServiceDiscovery::getData(const std::string& path) {
+    if (!m_connected) {
+        co_return ZkResult{-1, "", "not connected"};
+    }
+    
+    auto result = co_await m_zkClient->getData(path, false);
+    co_return result;
 }
 
 /**
@@ -542,7 +574,7 @@ Coro::Task<std::vector<std::string>> ServiceDiscovery::discoverAllMethods(const 
     }
     
     std::string path = "/rpc/" + service_name;
-    auto result = co_await m_zkClient->getChildren(path);
+    auto result = co_await m_zkClient->getChildren(path, false);
     
     if (!result.ok()) {
         co_return std::vector<std::string>();
@@ -556,6 +588,32 @@ Coro::Task<std::vector<std::string>> ServiceDiscovery::discoverAllMethods(const 
     }
     
     co_return std::move(methods);
+}
+
+/**
+ * @brief 设置服务变更 watcher
+ */
+void ServiceDiscovery::setServiceWatcher(
+    const std::string& service_name,
+    std::function<void(const std::vector<std::string>&)> callback) {
+    if (!m_zkClient || !m_connected) {
+        return;
+    }
+    
+    m_serviceWatcher = std::move(callback);
+    std::string path = "/rpc/services/" + service_name;
+    
+    // 先设置 watcher 回调
+    m_zkClient->setChildrenWatcher(path, 
+        [this](const std::vector<std::string>& children) {
+            fprintf(stderr, "[Watcher] callback triggered, children=%zu\n", children.size());
+            if (m_serviceWatcher) {
+                m_serviceWatcher(children);
+            }
+        });
+    
+    // 再调用 getChildren 触发 watcher 注册
+    m_zkClient->getChildren(path, true);
 }
 
 /**

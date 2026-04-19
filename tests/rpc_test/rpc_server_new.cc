@@ -9,30 +9,34 @@
 #include "calc_service.h"
 #include <iostream>
 
-int main() {
-    printf("[RpcServer] Starting...\n");
-    fflush(stdout);
+// 全局指针用于信号处理
+Coro::RpcServer* g_server = nullptr;
 
+void signal_handler(int sig) {
+    printf("\n[RpcServer] Received Ctrl+C, stopping...\n");
+    fflush(stdout);
+    if (g_server) {
+        g_server->stop();
+    }
+}
+
+int main() {
     Coro::RpcServer server(8000, "127.0.0.1:2181");
+    g_server = &server;
     server.setWorkerCount(4);
 
     CalculatorServiceImpl calcService;
     server.registerService(&calcService);
 
+    signal(SIGINT, signal_handler);
+
     auto serverTask = [&server]() -> Coro::Task<void> {
-        printf("[RpcServer] Starting server...\n");
-        fflush(stdout);
         co_await server.start();
-        printf("[RpcServer] Server stopped\n");
     };
 
     serverTask().schedule();
 
-    printf("[RpcServer] Running event loop...\n");
-    fflush(stdout);
-
     Coro::get_event_loop().run_until_complete();
 
-    printf("[RpcServer] Done\n");
     return 0;
 }

@@ -21,6 +21,8 @@ struct RpcClientOptions {
     int timeoutMs = 3000;
     int maxRetries = 3;
     bool enableLoadBalance = true;
+    int heartbeatCheckIntervalMs = 2000;  // 心跳检测间隔
+    int heartbeatTimeoutMs = 15000;     // 心跳超时时间
 };
 
 class RpcClient : public std::enable_shared_from_this<RpcClient> {
@@ -39,6 +41,8 @@ public:
 
     void disconnect();
     bool isConnected() const;
+
+    void setServiceStatusCallback(std::function<void(const std::string& serviceName, bool isAlive)> callback);
 
     void callMethod(const google::protobuf::MethodDescriptor* method,
                     const google::protobuf::Message* request,
@@ -67,6 +71,8 @@ private:
     std::atomic<bool> m_usingDiscovery{false};
     std::string m_serviceName;
     std::string m_methodName;
+    std::function<void(const std::string&, bool)> m_statusCallback;
+    std::atomic<bool> m_stop;
 };
 
 class RpcCaller {

@@ -10,7 +10,7 @@
 namespace Coro {
 
 RpcClient::RpcClient(const RpcClientOptions& options)
-    : m_options(options) {
+    : m_options(options), m_stop(false) {
     m_discovery = std::make_shared<ServiceDiscovery>();
     m_discovery->setZkHost(options.zkHost);
 }
@@ -54,7 +54,9 @@ Task<void> RpcClient::connectWithDiscovery(const std::string& serviceName,
 
     auto addrStr = co_await discoverService(serviceName, methodName);
     if (addrStr.empty()) {
-        throw std::runtime_error("discover service failed: " + serviceName);
+        fprintf(stderr, "[RpcClient] discover service failed: %s\n", serviceName.c_str());
+        m_connected.store(false);
+        co_return;
     }
 
     auto colonPos = addrStr.find(':');
@@ -67,27 +69,72 @@ Task<void> RpcClient::connectWithDiscovery(const std::string& serviceName,
 
     m_addr = net::IPNetAddr::Create(host, port);
     m_channel = std::make_shared<RpcChannel>(m_addr);
-    m_channel->setTimeout(m_options.timeoutMs);
-
+m_channel->setTimeout(m_options.timeoutMs);
+ 
     co_await m_channel->connect();
     m_connected.store(true);
     m_usingDiscovery.store(true);
+    
+    // 启动心跳检测
+    if (m_statusCallback) {
+        auto heartbeatTask = [this, serviceName, methodName]() -> Coro::Task<void> {
+            std::string path = "/rpc/services/" + serviceName;
+            bool lastAlive = false;
+            m_statusCallback(serviceName, true);  // 立即触发一次
+            
+            while (!m_stop.load() && m_usingDiscovery.load()) {
+                co_await Coro::sleep_for(std::chrono::milliseconds(m_options.heartbeatCheckIntervalMs));
+                
+                if (m_stop.load()) break;
+                
+                auto result = co_await m_discovery->getData(path);
+                bool alive = false;
+                
+                if (result.ok() && !result.data.empty()) {
+                    auto pos = result.data.find('#');
+                    if (pos != std::string::npos) {
+                        try {
+                            int timestamp = std::stoi(result.data.substr(pos + 1));
+                            int now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch()).count();
+                            alive = (now - timestamp) < m_options.heartbeatTimeoutMs;
+                        } catch (...) {
+                            alive = false;
+                        }
+                    }
+                }
+                
+                if (alive != lastAlive) {
+                    m_statusCallback(serviceName, alive);
+                    lastAlive = alive;
+                }
+            }
+        };
+        heartbeatTask().schedule();
+    }
 }
 
 void RpcClient::disconnect() {
+    m_stop.store(true);
+    
     if (!m_connected.load()) {
         return;
     }
     if (m_channel) {
         m_channel->close();
-        // 等待 channel 关闭完成
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     m_connected.store(false);
+    m_usingDiscovery.store(false);
 }
 
 bool RpcClient::isConnected() const {
     return m_connected.load() && m_channel && m_channel->isConnected();
+}
+
+void RpcClient::setServiceStatusCallback(
+    std::function<void(const std::string& serviceName, bool isAlive)> callback) {
+    m_statusCallback = callback;
 }
 
 void RpcClient::callMethod(const google::protobuf::MethodDescriptor* method,

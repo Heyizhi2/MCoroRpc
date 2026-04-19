@@ -123,6 +123,12 @@ public:
     void setWorkerCount(int count) { m_worker_count = count; }
 
     /**
+     * @brief 设置心跳间隔
+     * @param interval_ms 心跳间隔（毫秒）
+     */
+    void setHeartbeatInterval(int interval_ms) { m_heartbeatIntervalMs = interval_ms; }
+
+    /**
      * @brief 注册 protobuf 服务
      * @param service protobuf 服务指针
      * @note 服务的所有方法会注册到分发器，并通过 ZooKeeper 暴露给客户端
@@ -172,6 +178,9 @@ private:
     std::string m_ip = "127.0.0.1";                         ///< 监听 IP
     int m_port = 8000;                                      ///< 监听端口
 
+    int m_heartbeatIntervalMs = 5000;                       ///< 心跳间隔（毫秒）
+    std::atomic<bool> m_registered{false};               ///< 注册状态
+
     ZkClient::ptr m_zkClient;                               ///< ZooKeeper 客户端
     std::unique_ptr<Coro::net::TcpService> m_tcpService;   ///< TCP 服务
     std::unique_ptr<RpcDispatcher> m_dispatcher;           ///< RPC 分发器
@@ -189,7 +198,7 @@ private:
  * @details 连接 ZooKeeper 获取可用的 RPC 服务地址列表
  * @note 用于 RPC 客户端实现负载均衡和故障转移
  */
-class ServiceDiscovery {
+class ServiceDiscovery : public std::enable_shared_from_this<ServiceDiscovery> {
 public:
     /// 智能指针类型别名
     using ptr = std::shared_ptr<ServiceDiscovery>;
@@ -228,11 +237,26 @@ public:
     Coro::Task<std::string> discover(const std::string& service_name, const std::string& method_name);
 
     /**
+     * @brief 获取服务节点数据
+     * @param path 节点路径
+     * @return 协程Task，返回节点数据
+     */
+    Coro::Task<ZkResult> getData(const std::string& path);
+
+    /**
      * @brief 发现指定服务的所有方法
      * @param service_name 服务名称
      * @return 协程Task，返回所有方法的可用地址列表
      */
     Coro::Task<std::vector<std::string>> discoverAllMethods(const std::string& service_name);
+
+    /**
+     * @brief 设置服务变更 watcher
+     * @param service_name 服务名称
+     * @param callback 回调函数，参数为服务地址列表
+     */
+    void setServiceWatcher(const std::string& service_name,
+        std::function<void(const std::vector<std::string>&)> callback);
 
     /**
      * @brief 关闭连接
@@ -250,6 +274,7 @@ private:
     int m_timeout = 30000;                       ///< 超时时间
     ZkClient::ptr m_zkClient;                    ///< ZooKeeper 客户端
     bool m_connected = false;                   ///< 连接状态
+    std::function<void(const std::vector<std::string>&)> m_serviceWatcher;  ///< 服务变更回调
 };
 
 }

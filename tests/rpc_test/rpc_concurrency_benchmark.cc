@@ -22,8 +22,8 @@
 
 using namespace std::chrono;
 
-constexpr int TOTAL_REQUESTS = 40;
-constexpr int CONCURRENT_CLIENTS = 40;
+constexpr int TOTAL_REQUESTS = 4000;
+constexpr int CONCURRENT_CLIENTS = 50;
 constexpr int REQUESTS_PER_CLIENT = TOTAL_REQUESTS / CONCURRENT_CLIENTS;
 constexpr int SERVER_PORT = 8001;
 constexpr int THREAD_COUNT = 8;
@@ -98,7 +98,7 @@ void runServer() {
     fflush(stdout);
     
     Coro::RpcServer server(SERVER_PORT, "");
-    server.setWorkerCount(8);
+    server.setWorkerCount(16);
     
     CalculatorServiceImpl calcService;
     server.registerService(&calcService);

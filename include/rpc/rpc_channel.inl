@@ -1,6 +1,8 @@
 /**
  * @file rpc_channel.inl
- * @brief RPC Channel 实现
+ * @brief RPC Channel 内联实现
+ * @details 包含 RpcController 和 RpcChannel 的所有成员函数实现
+ * @note 实现采用了协程化设计，支持异步非阻塞 RPC 调用
  */
 
 #pragma once
@@ -109,15 +111,15 @@ inline Task<void> RpcChannel::connect() {
     m_connected.store(true);
     m_reconnect_retry = 0;
     
-    if (!m_worker_running.exchange(true)) {
-        // printf("[Channel] Starting workerLoop from connect()\n");
-        // fflush(stdout);
-        // 不等待 workerLoop，让它在后台运行
-        auto worker = [this]() -> Task<void> {
-            co_await workerLoop();
-        };
-        worker().schedule();
-    }
+    // if (!m_worker_running.exchange(true)) {
+    //     // printf("[Channel] Starting workerLoop from connect()\n");
+    //     // fflush(stdout);
+    //     // 不等待 workerLoop，让它在后台运行
+    //     auto worker = [this]() -> Task<void> {
+    //         co_await workerLoop();
+    //     };
+    //     worker().schedule();
+    // }
     
     co_return;
 }

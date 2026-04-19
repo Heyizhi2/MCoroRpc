@@ -30,6 +30,8 @@ public:
 
     net::NetAddr::s_ptr getAddr() const { return m_addr; }
 
+    ServiceDiscovery::ptr getDiscovery() const { return m_discovery; }
+
 private:
     net::NetAddr::s_ptr m_addr;
     std::string m_zkHost;
@@ -38,6 +40,7 @@ private:
     std::atomic<bool> m_running{false};
 
     RpcProvider::ptr m_provider;
+    ServiceDiscovery::ptr m_discovery;
     std::vector<google::protobuf::Service*> m_services;
 };
 

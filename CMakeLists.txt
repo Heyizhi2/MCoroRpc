@@ -82,6 +82,9 @@ target_link_libraries(test_service_discovery PRIVATE CoroRpc Catch2::Catch2WithM
 add_executable(test_rpc_provider tests/test_rpc_provider.cc)
 target_link_libraries(test_rpc_provider PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOOKEEPER_LIBRARY})
 
+add_executable(test_watcher tests/test_watcher.cc)
+target_link_libraries(test_watcher PRIVATE CoroRpc ${ZOOKEEPER_LIBRARY})
+
 add_executable(test_net_addr tests/test_net_addr.cc)
 target_link_libraries(test_net_addr PRIVATE CoroRpc Catch2::Catch2WithMain)
 
@@ -133,3 +136,6 @@ target_link_libraries(rpc_simple_benchmark PRIVATE CoroRpc)
 
 add_executable(rpc_concurrency_benchmark tests/rpc_test/rpc_concurrency_benchmark.cc tests/rpc_test/calc.pb.cc tests/rpc_test/calc_service.h)
 target_link_libraries(rpc_concurrency_benchmark PRIVATE CoroRpc)
+
+add_executable(test_eventloop_pool tests/test_eventloop_pool.cc)
+target_link_libraries(test_eventloop_pool PRIVATE CoroRpc)

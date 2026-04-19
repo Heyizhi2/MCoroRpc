@@ -16,7 +16,7 @@ namespace Coro {
 
 /**
  * @brief 全局 watcher 回调
- * @details 处理 ZooKeeper 连接状态变化(连接、过期、认证失败)
+ * @details 处理 ZooKeeper 连接状态变化和 watch 事件
  */
 void ZkClient::globalWatcher(zhandle_t* zh, int type, int state, 
                              const char* path, void* ctx) {
@@ -52,6 +52,16 @@ void ZkClient::globalWatcher(zhandle_t* zh, int type, int state,
             }
             self->m_connCond.notify_one();
         }
+    } else if (type == ZOO_CHANGED_EVENT || type == ZOO_CREATED_EVENT || 
+               type == ZOO_DELETED_EVENT || type == ZOO_CHILD_EVENT) {
+        // Watch 事件
+        // fprintf(stderr, "[globalWatcher] watch event: type=%d, path=%s, state=%d\n", 
+        //        type, path ? path : "(null)", state);
+        if (path) {
+            self->processWatcher(type, state, path);
+        }
+    } else {
+        fprintf(stderr, "[globalWatcher] unknown type=%d\n", type);
     }
 }
 
@@ -264,8 +274,10 @@ Coro::Task<ZkResult> ZkClient::create(const std::string& path,
 
 /**
  * @brief 获取节点数据
+ * @param path 节点路径
+ * @param watch 是否注册 watch
  */
-Coro::Task<ZkResult> ZkClient::getData(const std::string& path) {
+Coro::Task<ZkResult> ZkClient::getData(const std::string& path, bool watch) {
     if (!m_connected.load()) {
         co_return ZkResult{ZINVALIDSTATE, "", "not connected"};
     }
@@ -283,7 +295,8 @@ Coro::Task<ZkResult> ZkClient::getData(const std::string& path) {
         m_pendingOps.push_back(op);
     }
     
-    int rc = zoo_aget(m_zkHandle, path.c_str(), 0, getCompletion, op);
+    // 注册 watch：传入 1 表示启用 watch
+    int rc = zoo_aget(m_zkHandle, path.c_str(), watch ? 1 : 0, getCompletion, op);
     
     if (rc != ZOK) {
         std::lock_guard<std::mutex> lock(m_pendingMutex);
@@ -398,8 +411,10 @@ Coro::Task<ZkResult> ZkClient::deleteNode(const std::string& path, int version) 
 
 /**
  * @brief 获取子节点列表
+ * @param path 节点路径
+ * @param watch 是否注册 watch
  */
-Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path) {
+Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path, bool watch) {
     if (!m_connected.load()) {
         co_return ZkResult{ZINVALIDSTATE, "", "not connected"};
     }
@@ -417,7 +432,8 @@ Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path) {
         m_pendingOps.push_back(op);
     }
     
-    int rc = zoo_aget_children2(m_zkHandle, path.c_str(), 0, getChildrenCompletion, op);
+    // 注册 watch：传入 1 表示启用 watch
+    int rc = zoo_aget_children2(m_zkHandle, path.c_str(), watch ? 1 : 0, getChildrenCompletion, op);
     
     if (rc != ZOK) {
         std::lock_guard<std::mutex> lock(m_pendingMutex);
@@ -438,6 +454,75 @@ Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path) {
     }
     delete op;
     co_return result;
+}
+
+/**
+ * @brief 处理 watch 回调
+ * @param type 事件类型
+ * @param state 状态
+ * @param path 变化的节点路径
+ * @note 在 zookeeper 工作线程中执行，不能用 co_await
+ */
+void ZkClient::processWatcher(int type, int state, const char* path) {
+    if (!path || !m_zkHandle) {
+        fprintf(stderr, "[ZK Watcher] path=%s or handle=null, type=%d\n", 
+                path ? path : "null", type);
+        return;
+    }
+    
+    std::string pathStr(path);
+    // fprintf(stderr, "[ZK Watcher] processWatcher called: type=%d, path=%s\n", type, pathStr.c_str());
+    
+    if (type == ZOO_CHANGED_EVENT) {
+        std::lock_guard<std::mutex> lock(m_watcherMutex);
+        auto it = m_dataWatchers.find(pathStr);
+        if (it != m_dataWatchers.end()) {
+            char buf[4096];
+            int len = sizeof(buf);
+            Stat stat;
+            int rc = zoo_get(m_zkHandle, pathStr.c_str(), 0, buf, &len, &stat);
+            if (rc == ZOK) {
+                it->second(std::string(buf, len));
+            }
+            // 重新注册 watch
+            zoo_get(m_zkHandle, pathStr.c_str(), 1, nullptr, nullptr, nullptr);
+        }
+    } else if (type == ZOO_CHILD_EVENT) {
+        std::lock_guard<std::mutex> lock(m_watcherMutex);
+        auto it = m_childrenWatchers.find(pathStr);
+        if (it != m_childrenWatchers.end()) {
+            String_vector children;
+            children.data = nullptr;
+            children.count = 0;
+            int rc = zoo_get_children(m_zkHandle, pathStr.c_str(), 1, &children);
+            if (rc == ZOK) {
+                std::vector<std::string> childList;
+                for (int i = 0; i < children.count; ++i) {
+                    childList.push_back(children.data[i]);
+                }
+                deallocate_String_vector(&children);
+                it->second(childList);
+            }
+        }
+    }
+}
+
+/**
+ * @brief 设置数据变化 watcher
+ * @note 这是同步函数，需要用户自己在协程中调用 getData 初始化
+ */
+void ZkClient::setDataWatcher(const std::string& path, std::function<void(const std::string&)> callback) {
+    std::lock_guard<std::mutex> lock(m_watcherMutex);
+    m_dataWatchers[path] = callback;
+}
+
+/**
+ * @brief 设置子节点变化 watcher
+ * @note 这是同步函数，需要用户自己在协程中调用 getChildren 初始化
+ */
+void ZkClient::setChildrenWatcher(const std::string& path, std::function<void(const std::vector<std::string>&)> callback) {
+    std::lock_guard<std::mutex> lock(m_watcherMutex);
+    m_childrenWatchers[path] = callback;
 }
 
 /**
