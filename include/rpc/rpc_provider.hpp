@@ -8,9 +8,11 @@
 #include <google/protobuf/service.h>
 #include <google/protobuf/descriptor.h>
 #include <memory>
-#include <unordered_map>
+#include <string>
 #include <vector>
 #include <atomic>
+#include <mutex>
+#include <random>
 #include <functional>
 #include "zkclient.hpp"
 #include "rpc_context.h"
@@ -23,6 +25,61 @@
 #include "../coder/tinypb_coder.hpp"
 
 namespace Coro {
+
+/**
+ * @brief 负载均衡器接口
+ * @details 定义选择服务实例的策略
+ */
+class LoadBalancer {
+public:
+    using ptr = std::shared_ptr<LoadBalancer>;
+    virtual ~LoadBalancer() = default;
+    
+    /**
+     * @brief 从实例列表中选择一个
+     * @param instances 可用的实例列表
+     * @return 选择的实例地址，空表示无可用实例
+     */
+    virtual std::string select(const std::vector<std::string>& instances) = 0;
+};
+
+/**
+ * @brief 轮询负载均衡器
+ * @details 按顺序依次选择每个实例
+ */
+class RoundRobinLoadBalancer : public LoadBalancer {
+public:
+    using ptr = std::shared_ptr<RoundRobinLoadBalancer>;
+    
+    std::string select(const std::vector<std::string>& instances) override {
+        if (instances.empty()) {
+            return "";
+        }
+        return instances[m_index.fetch_add(1) % instances.size()];
+    }
+    
+private:
+    std::atomic<size_t> m_index{0};
+};
+
+/**
+ * @brief 随机负载均衡器
+ * @details 随机选择一个实例
+ */
+class RandomLoadBalancer : public LoadBalancer {
+public:
+    using ptr = std::shared_ptr<RandomLoadBalancer>;
+    
+    std::string select(const std::vector<std::string>& instances) override {
+        if (instances.empty()) {
+            return "";
+        }
+        std::uniform_int_distribution<size_t> dist(0, instances.size() - 1);
+        std::random_device rd;
+        std::mt19937_64 gen(rd());
+        return instances[dist(gen)];
+    }
+};
 
 /**
  * @brief RPC 服务信息结构
@@ -257,6 +314,14 @@ public:
      */
     void setServiceWatcher(const std::string& service_name,
         std::function<void(const std::vector<std::string>&)> callback);
+
+    /**
+     * @brief 获取服务的所有实例地址
+     * @param service_name 服务名称（完整服务名）
+     * @return 协程Task，返回所有实例的地址列表（如 ["192.168.1.1:8001", "192.168.1.2:8001"]）
+     * @details 从 ZooKeeper 获取服务的所有临时子节点，子节点名即为实例地址
+     */
+    Coro::Task<std::vector<std::string>> getInstances(const std::string& service_name);
 
     /**
      * @brief 关闭连接

@@ -1,6 +1,6 @@
 /**
  * @file rpc_client_new.cc
- * @brief 使用新版 RpcClient 的示例
+ * @brief 使用新版 RpcClient 的示例 - 支持多实例负载均衡
  */
 
 #include "../../include/coro.hpp"
@@ -9,48 +9,64 @@
 #include <iostream>
 
 int main() {
-    printf("[RpcClient] Starting...\n");
+    printf("=== RPC Client New (Multi-Instance) ===\n\n");
     fflush(stdout);
 
     Coro::RpcClientOptions options;
     options.zkHost = "127.0.0.1:2181";
     options.timeoutMs = 3000;
-    options.heartbeatCheckIntervalMs = 2000;
-    options.heartbeatTimeoutMs = 15000;
+    options.maxRetries = 3;
 
     auto client = std::make_shared<Coro::RpcClient>(options);
 
     client->setServiceStatusCallback([](const std::string& serviceName, bool isAlive) {
-        printf("[RpcClient] Service %s is %s\n", 
+        printf("[Client] Service %s is %s\n", 
                serviceName.c_str(), isAlive ? "UP" : "DOWN");
         fflush(stdout);
     });
 
     auto clientTask = [client]() -> Coro::Task<void> {
-        printf("[RpcClient] Connecting via discovery...\n");
+        printf("[Client] Connecting via discovery...\n");
         fflush(stdout);
 
-        co_await client->connectWithDiscovery("testrpc.Calculator", "Add");
+        co_await client->connectWithDiscovery("testrpc.Calculator");
         
-        printf("[RpcClient] Connected!\n");
+        printf("[Client] Connected via discovery!\n");
+        printf("[Client] LoadBalancer: %s\n", 
+               typeid(*client->getLoadBalancer()).name());
         fflush(stdout);
 
-        // 保持运行，观察心跳
-        for (int i = 0; i < 60; i++) {
-            co_await Coro::sleep_for(std::chrono::seconds(1));
-            printf("[RpcClient] tick %d, connected=%d\n", i, client->isConnected());
+        // 测试 RPC 调用
+        testrpc::AddRequest request;
+        request.set_a(10);
+        request.set_b(20);
+
+        for (int i = 0; i < 5; i++) {
+            testrpc::AddResponse response;
+            bool ok = client->callMethodSync(
+                testrpc::Calculator::descriptor()->FindMethodByName("Add"),
+                &request, &response, 3000);
+            
+            if (ok) {
+                printf("[Client] Call %d: %d + %d = %d\n", 
+                       i, request.a(), request.b(), response.result());
+            } else {
+                printf("[Client] Call %d: FAILED\n", i);
+            }
+            fflush(stdout);
+            
+            co_await Coro::sleep_for(std::chrono::milliseconds(500));
         }
 
         client->disconnect();
-        printf("[RpcClient] Disconnected\n");
+        printf("[Client] Done\n");
     };
     clientTask().schedule();
 
-    printf("[RpcClient] Running event loop...\n");
+    printf("[Client] Running event loop...\n");
     fflush(stdout);
 
     Coro::get_event_loop().run_until_complete();
 
-    printf("[RpcClient] Done\n");
     return 0;
 }

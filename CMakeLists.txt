@@ -79,6 +79,9 @@ target_link_libraries(test_zkclient PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOO
 add_executable(test_service_discovery tests/test_service_discovery.cc)
 target_link_libraries(test_service_discovery PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOOKEEPER_LIBRARY})
 
+add_executable(test_service_discovery_dynamic tests/test_service_discovery_dynamic.cc)
+target_link_libraries(test_service_discovery_dynamic PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOOKEEPER_LIBRARY})
+
 add_executable(test_rpc_provider tests/test_rpc_provider.cc)
 target_link_libraries(test_rpc_provider PRIVATE CoroRpc Catch2::Catch2WithMain ${ZOOKEEPER_LIBRARY})
 
@@ -139,3 +142,9 @@ target_link_libraries(rpc_concurrency_benchmark PRIVATE CoroRpc)
 
 add_executable(test_eventloop_pool tests/test_eventloop_pool.cc)
 target_link_libraries(test_eventloop_pool PRIVATE CoroRpc)
+
+add_executable(test_zk_nodes tests/test_zk_nodes.cc)
+target_link_libraries(test_zk_nodes PRIVATE CoroRpc)
+
+add_executable(test_discovery tests/test_discovery.cc)
+target_link_libraries(test_discovery PRIVATE CoroRpc)
