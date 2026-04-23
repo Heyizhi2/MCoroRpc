@@ -85,6 +85,22 @@ void RpcClient::setServiceStatusCallback(
     m_statusCallback = std::move(callback);
 }
 
+Coro::Task<void> RpcClient::connectDirect(const std::string& host, int port) {
+    auto addr = net::IPNetAddr::Create(host, port);
+    co_await connectDirect(addr);
+}
+
+Coro::Task<void> RpcClient::connectDirect(const net::NetAddr::s_ptr& addr) {
+    m_addr = addr;
+    m_serviceName = "";
+
+    std::vector<std::string> instances = { addr->toString() };
+    updateInstances(instances);
+    m_connected.store(true);
+
+    co_return;
+}
+
 Coro::Task<std::shared_ptr<RpcChannel>> RpcClient::getOrCreateChannel(const std::string& addr) {
     {
         std::lock_guard<std::mutex> lock(m_instancesMutex);

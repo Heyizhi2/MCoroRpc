@@ -49,6 +49,10 @@ public:
 
     void setServiceStatusCallback(std::function<void(const std::string& serviceName, bool isAlive)> callback);
 
+    Coro::Task<void> connectDirect(const std::string& host, int port);
+
+    Coro::Task<void> connectDirect(const net::NetAddr::s_ptr& addr);
+
     Coro::Task<void> connectWithDiscovery(const std::string& serviceName);
 
     void disconnect();

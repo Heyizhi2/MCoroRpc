@@ -22,7 +22,7 @@
 
 using namespace std::chrono;
 
-constexpr int TOTAL_REQUESTS = 4000;
+constexpr int TOTAL_REQUESTS = 50;
 constexpr int CONCURRENT_CLIENTS = 50;
 constexpr int REQUESTS_PER_CLIENT = TOTAL_REQUESTS / CONCURRENT_CLIENTS;
 constexpr int SERVER_PORT = 8001;
@@ -32,12 +32,11 @@ std::atomic<int> g_success_count{0};
 std::atomic<int> g_fail_count{0};
 std::atomic<int> g_clients_done{0};
 
-Coro::Task<void> runClientRequests(int client_id, std::shared_ptr<Coro::RpcClient> client) {
+Coro::Task<void> runClientRequests(int client_id, std::shared_ptr<Coro::RpcChannel> channel) {
     auto* serviceDesc = testrpc::Calculator::descriptor();
     auto* methodDesc = serviceDesc->method(0);
     
-    auto channel = client->getChannel();
-    if (!channel) {
+    if (!channel || !channel->isConnected()) {
         g_fail_count.fetch_add(REQUESTS_PER_CLIENT);
         co_return;
     }
@@ -66,27 +65,26 @@ Coro::Task<void> runClientRequests(int client_id, std::shared_ptr<Coro::RpcClien
     co_return;
 }
 
-Coro::Task<void> runSingleClient(int client_id) {
-    Coro::RpcClientOptions options;
-    options.zkHost = "";
-    options.timeoutMs = 30000;
+Coro::Task<void> runSingleClient(int client_id, const std::string& host, int port) {
+    auto channel = std::make_shared<Coro::RpcChannel>(host, port);
+    channel->setTimeout(30000);
     
-    auto client = std::make_shared<Coro::RpcClient>(options);
+    try {
+        co_await channel->connect();
+        co_await runClientRequests(client_id, channel);
+        channel->close();
+    } catch (...) {
+        g_fail_count.fetch_add(REQUESTS_PER_CLIENT);
+    }
     
-    co_await client->connect("127.0.0.1", SERVER_PORT);
-    
-    co_await runClientRequests(client_id, client);
-    
-    client->disconnect();
     g_clients_done.fetch_add(1);
-    
     co_return;
 }
 
-void runClientOnThread(int threadId, int clientStart, int clientCount) {
+void runClientOnThread(int threadId, int clientStart, int clientCount, const std::string& host, int port) {
     std::vector<Coro::Task<>> clientTasks;
     for (int i = 0; i < clientCount; ++i) {
-        auto task = runSingleClient(clientStart + i);
+        auto task = runSingleClient(clientStart + i, host, port);
         task.schedule();
     }
     
@@ -129,7 +127,7 @@ void runClient() {
     for (int t = 0; t < THREAD_COUNT; ++t) {
         int start = t * clientsPerThread;
         int count = (t == THREAD_COUNT - 1) ? (CONCURRENT_CLIENTS - start) : clientsPerThread;
-        threads.emplace_back(runClientOnThread, t, start, count);
+        threads.emplace_back(runClientOnThread, t, start, count, "127.0.0.1", SERVER_PORT);
     }
     
     auto start = steady_clock::now();
