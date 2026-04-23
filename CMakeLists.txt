@@ -124,21 +124,13 @@ target_link_libraries(echo_test_server PRIVATE CoroRpc)
 add_executable(echo_test_client tests/rpc_test/echo_test_client.cc)
 target_link_libraries(echo_test_client PRIVATE CoroRpc)
 
-# RPC 性能测试
-add_executable(rpc_benchmark_server tests/rpc_benchmark_server.cc)
+# RPC 性能测试 - 服务端 (支持命令行参数修改 worker 数量)
+add_executable(rpc_benchmark_server tests/rpc_test/rpc_benchmark_server.cc tests/rpc_test/calc.pb.cc tests/rpc_test/calc_service.h)
 target_link_libraries(rpc_benchmark_server PRIVATE CoroRpc)
 
-add_executable(rpc_benchmark_client tests/rpc_benchmark_client.cc)
+# RPC 性能测试 - 客户端 (支持命令行参数修改总请求数、并发数、线程数)
+add_executable(rpc_benchmark_client tests/rpc_test/rpc_benchmark_client.cc tests/rpc_test/calc.pb.cc)
 target_link_libraries(rpc_benchmark_client PRIVATE CoroRpc)
-
-add_executable(rpc_full_benchmark tests/rpc_full_benchmark.cc)
-target_link_libraries(rpc_full_benchmark PRIVATE CoroRpc)
-
-add_executable(rpc_simple_benchmark tests/rpc_simple_benchmark.cc)
-target_link_libraries(rpc_simple_benchmark PRIVATE CoroRpc)
-
-add_executable(rpc_concurrency_benchmark tests/rpc_test/rpc_concurrency_benchmark.cc tests/rpc_test/calc.pb.cc tests/rpc_test/calc_service.h)
-target_link_libraries(rpc_concurrency_benchmark PRIVATE CoroRpc)
 
 add_executable(test_eventloop_pool tests/test_eventloop_pool.cc)
 target_link_libraries(test_eventloop_pool PRIVATE CoroRpc)
