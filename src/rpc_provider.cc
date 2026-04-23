@@ -1,3 +1,12 @@
+/**
+ * @file rpc_provider.cc
+ * @brief RPC 服务提供者实现
+ * @details 实现 RpcDispatcher、RpcProvider 和 ServiceDiscovery 类的所有方法：
+ *       - RpcDispatcher：服务注册与请求分发
+ *       - RpcProvider：TCP 监听、ZooKeeper 注册、worker 协程处理
+ *       - ServiceDiscovery：服务发现、实例列表获取、Watcher 设置
+ */
+
 #include "../include/rpc/rpc_provider.hpp"
 #include "../include/rpc/rpc_context.h"
 #include "../include/coro.hpp"

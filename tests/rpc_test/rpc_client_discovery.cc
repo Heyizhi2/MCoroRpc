@@ -1,6 +1,7 @@
 /**
  * @file rpc_client_discovery.cc
  * @brief 使用服务发现模式的 RpcClient 示例
+ * @details 通过 ZooKeeper 服务发现连接到 Calculator 服务
  */
 
 #include "../../include/coro.hpp"
@@ -23,7 +24,7 @@ int main() {
         printf("[RpcClient] Connecting to ZooKeeper for service discovery...\n");
         fflush(stdout);
 
-        co_await client->connectWithDiscovery("Calculator", "Add");
+        co_await client->connectWithDiscovery("testrpc.Calculator");
 
         printf("[RpcClient] Service discovered and connected\n");
         fflush(stdout);
