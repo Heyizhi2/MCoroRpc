@@ -60,7 +60,7 @@ int main() {
                 printf("[Client] Call %d: %d + %d = %d\n", 
                        i, request.a(), request.b(), response.result());
             } else {
-                printf("[Client] Call %d: FAILED\n", i);
+                printf("[Client] Call %d: FAILED (%s)\n", i, client->getLastErrorText().c_str());
             }
             fflush(stdout);
             

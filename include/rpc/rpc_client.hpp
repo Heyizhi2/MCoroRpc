@@ -159,6 +159,12 @@ public:
      */
     LoadBalancer::ptr getLoadBalancer() const { return m_lb; }
 
+    /**
+     * @brief 获取最近一次调用的错误信息
+     * @return 错误描述字符串，成功时为空字符串
+     */
+    std::string getLastErrorText() const { return m_last_error; }
+
 private:
     /**
      * @brief 获取或创建到指定地址的连接
@@ -203,6 +209,7 @@ private:
     std::atomic<bool> m_connected{false};         ///< 连接状态
     std::atomic<bool> m_stop{false};             ///< 停止标志
     std::function<void(const std::string&, bool)> m_statusCallback;  ///< 状态回调
+    std::string m_last_error;                     ///< 最近一次调用的错误信息
 };
 
 /**

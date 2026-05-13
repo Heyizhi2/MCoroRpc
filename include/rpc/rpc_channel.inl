@@ -463,23 +463,25 @@ inline Task<void> RpcChannel::CallMethodAsync(
     std::vector<char> data(out_buf->m_buffer.begin() + out_buf->readIndex(),
                            out_buf->m_buffer.begin() + out_buf->writeIndex());
     
-    // printf("[Channel] About to write %ld bytes, fd=%d\n", (long)data.size(), m_stream->fd());
-    // fflush(stdout);
-    
-    // 写入数据
-    auto writeTask = m_stream->write(data);
-    // printf("[Channel] Before co_await write\n");
-    // fflush(stdout);
-    co_await writeTask;
-    // printf("[Channel] Write done, readable=%ld\n", (long)m_stream->getReadBuffer()->readAble());
-    // fflush(stdout);
-    
-    // 读取响应
-    // printf("[Channel] Before readToBuffer...\n");
-    // fflush(stdout);
-    co_await m_stream->readToBuffer();
-    // printf("[Channel] After readToBuffer, readable=%ld\n", (long)m_stream->getReadBuffer()->readAble());
-    // fflush(stdout);
+    int timeout_ms = ctrl->GetTimeout();
+
+    auto io_result = co_await wait_for([&]() -> Task<void> {
+        co_await m_stream->write(data);
+        co_await m_stream->readToBuffer();
+    }(), std::chrono::milliseconds(timeout_ms));
+
+    if (io_result.is_timeout) {
+        ctrl->SetFailed("rpc timeout");
+        if (done) done->Run();
+        recycleProtocol(req);
+        co_return;
+    }
+    if (!io_result.ok) {
+        ctrl->SetFailed("rpc io error");
+        if (done) done->Run();
+        recycleProtocol(req);
+        co_return;
+    }
     
     auto in_buf = m_stream->getReadBuffer();
     std::vector<AbstarcPortocol::s_ptr> rsp_msgs;

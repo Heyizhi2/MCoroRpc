@@ -265,12 +265,17 @@ Coro::Task<bool> RpcClient::callMethodAsync(
     google::protobuf::Message* response,
     RpcController* controller) {
     
+    if (!controller) {
+        co_return false;
+    }
+    
     std::vector<std::string> availableInstances;
     std::set<std::string> failedAddrsSnapshot;
     
     {
         std::lock_guard<std::mutex> lock(m_instancesMutex);
         if (m_instances.empty()) {
+            controller->SetFailed("no available instances");
             co_return false;
         }
         
@@ -286,6 +291,7 @@ Coro::Task<bool> RpcClient::callMethodAsync(
         }
         
         if (availableInstances.empty()) {
+            controller->SetFailed("all instances are unavailable");
             co_return false;
         }
     }
@@ -295,10 +301,11 @@ Coro::Task<bool> RpcClient::callMethodAsync(
     auto channel = co_await getOrCreateChannel(targetAddr);
     if (!channel) {
         markUnavailable(targetAddr);
+        controller->SetFailed("failed to connect to " + targetAddr);
         co_return false;
     }
     
-    auto ctrl = dynamic_cast<RpcController*>(controller);
+    auto* ctrl = dynamic_cast<RpcController*>(controller);
     if (!ctrl) {
         co_return false;
     }
@@ -314,6 +321,7 @@ Coro::Task<bool> RpcClient::callMethodAsync(
         co_return true;
     } catch (const std::exception& e) {
         markUnavailable(targetAddr);
+        controller->SetFailed(std::string("rpc error: ") + e.what());
         co_return false;
     }
 }
@@ -341,6 +349,11 @@ bool RpcClient::callMethodSync(
     auto task = callMethodAsync(method, request, response, controller.get());
     task.schedule();
     get_event_loop().run_until_complete();
+    
+    m_last_error.clear();
+    if (controller->Failed()) {
+        m_last_error = controller->ErrorText();
+    }
     
     return !controller->Failed();
 }
