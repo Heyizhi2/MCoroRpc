@@ -417,12 +417,15 @@ Coro::Task<void> RpcProvider::start() {
     fflush(stdout);
     
     while (!m_stop.load()) {
-        // printf("[Provider] Waiting for client connection...\n");
-        // fflush(stdout);
-        
-        auto stream = co_await m_tcpService->accept();
-        // printf("[Provider] Producer: got client fd=%d, sending to channel...\n", stream.fd());
-        // fflush(stdout);
+        Coro::net::TcpStream stream{-1};
+        try {
+            stream = co_await m_tcpService->accept(std::chrono::milliseconds(24*60*60));
+        } catch (const Coro::TimeoutException&) {
+            continue;
+        } catch (...) {
+            break;
+        }
+        if (m_stop.load()) break;
         
         // 发送到 Channel (生产者) - 使用异步send
         co_await m_client_channel->send(std::move(stream));
@@ -456,12 +459,16 @@ void RpcProvider::stop() {
         usleep(100000);
     }
     
-    // 先关闭 channel，让 worker 退出 recv
+    // 先关闭 TCP service，让 accept 循环退出
+    if (m_tcpService) {
+        m_tcpService->close();
+    }
+    // 再关闭 channel，让 worker 退出 recv
     if (m_client_channel) {
         m_client_channel->close();
         m_client_channel.reset();
     }
-    // 再关闭 TCP service
+    // 最后销毁 TCP service
     if (m_tcpService) {
         m_tcpService.reset();
     }

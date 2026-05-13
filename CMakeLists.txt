@@ -100,6 +100,9 @@ target_link_libraries(test_rpc_dispatcher PRIVATE CoroRpc Catch2::Catch2WithMain
 add_executable(test_tcpstream tests/test_tcpstream.cc)
 target_link_libraries(test_tcpstream PRIVATE CoroRpc Catch2::Catch2WithMain)
 
+add_executable(test_accept_timeout tests/test_accept_timeout.cc)
+target_link_libraries(test_accept_timeout PRIVATE CoroRpc Catch2::Catch2WithMain)
+
 add_executable(benchmark_sched tests/benchmark_sched.cc)
 target_link_libraries(benchmark_sched PRIVATE CoroRpc nanobench)
 

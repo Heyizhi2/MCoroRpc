@@ -203,20 +203,16 @@ namespace Coro {
         
         if(it!=m_wait_callback.end()){
             res=std::move(it->second.callback);
-            auto coro = it->second.coro_handle;
             m_wait_callback.erase(it);
-            if(coro && !coro.done()){
-                coro.destroy();
-            }
         }
         
+        // 从 epoll 中移除
+        m_epoll.cancel_wait(wait_id);
+
+        // 从定时器堆中移除
         auto scheduled_it=std::find_if(m_scheduled.begin(),m_scheduled.end(),[wait_id](auto&p){
             return p.first==wait_id;
         });
-
-        //从 epoll 中移除
-        m_epoll.cancel_wait(wait_id);
-
         if(scheduled_it!=m_scheduled.end()){
             m_scheduled.erase(scheduled_it);
             std::make_heap(m_scheduled.begin(),m_scheduled.end(),[](auto& a,auto& b){

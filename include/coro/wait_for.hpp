@@ -61,7 +61,7 @@ auto wait_for(Task<T> task, std::chrono::milliseconds timeout) -> Task<WaitForRe
         if constexpr (std::is_void_v<T>) {
             co_await task;
         } else {
-            result.value = co_await task;
+            result.value = co_await std::move(task);
         }
         result.ok = true;
     } catch (...) {

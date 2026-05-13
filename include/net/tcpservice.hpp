@@ -29,9 +29,11 @@
 #include <netinet/tcp.h>
 #include "ioawaiter.hpp"
 #include "tcpstream.hpp"
+#include "../coro/wait_for.hpp"
 
 namespace Coro {
     namespace net {
+
         /**
          * @brief TCP服务端
          * @details 监听TCP连接请求，提供accept()方法接受新连接
@@ -45,16 +47,15 @@ namespace Coro {
             /**
              * @brief 移动构造函数
              */
-            TcpService(TcpService&& other):m_listen_fd(std::exchange(other.m_listen_fd, -1)){}
+            TcpService(TcpService&& other)
+                :m_listen_fd(std::exchange(other.m_listen_fd, -1)){}
 
             /**
              * @brief 移动赋值运算符
              */
             TcpService& operator=(TcpService&& other) noexcept{
                 if(this!=&other){
-                    if(m_listen_fd>=0){
-                        ::close(m_listen_fd);
-                    }
+                    close();
                     m_listen_fd=std::exchange(other.m_listen_fd,-1);
                 }
                 return *this;
@@ -71,20 +72,37 @@ namespace Coro {
              * @details 关闭监听socket
              */
             ~TcpService(){
-                if(m_listen_fd>=0){
-                    ::close(m_listen_fd);
+                close();
+            }
+
+            /**
+             * @brief 关闭服务
+             * @details 关闭监听 socket，等效于将服务端停止
+             */
+            void close() {
+                if (m_listen_fd >= 0) {
+                    ::close(std::exchange(m_listen_fd, -1));
                 }
             }
 
             /**
-             * @brief 接受新连接（协程）
+             * @brief 接受新连接（协程，无超时）
              * @return Task<TcpStream> 新建立的TCP连接
              * 
-             * 等待客户端连接，返回TcpStream用于与客户端通信
+             * 等待客户端连接，返回TcpStream用于与客户端通信。
+             * 若服务已关闭（close() 被调用），抛出 std::system_error。
+             * 
+             * @note 此版本无超时。若需超时或优雅关闭，优先使用 accept(timeout)。
              */
             Task<TcpStream> accept() {
                 while (true) {
+                    if (m_listen_fd < 0) {
+                        throw std::system_error(EBADF, std::generic_category(), "TcpService closed");
+                    }
                     co_await ReadAwaiter{m_listen_fd};
+                    if (m_listen_fd < 0) {
+                        throw std::system_error(EBADF, std::generic_category(), "TcpService closed");
+                    }
                     sockaddr_storage remote_addr;
                     socklen_t addrlen = sizeof(remote_addr);
                     int client_fd = accept4(m_listen_fd, reinterpret_cast<sockaddr*>(&remote_addr),
@@ -98,6 +116,29 @@ namespace Coro {
                         throw std::system_error(errno, std::generic_category(), "accept failed");
                     }
                 }
+            }
+
+            /**
+             * @brief 接受新连接（带超时）
+             * @param timeout 超时时间
+             * @return Task<TcpStream> 新建立的TCP连接
+             * @throws TimeoutException 超时
+             * 
+             * 在指定时间内等待客户端连接，超时抛出 TimeoutException。
+             * 超时后可配合 m_stop 标志位优雅关闭。
+             */
+            Task<TcpStream> accept(std::chrono::milliseconds timeout) {
+                auto result = co_await wait_for(accept(), timeout);
+                if (result.is_timeout) {
+                    throw TimeoutException();
+                }
+                if (!result.ok) {
+                    if (m_listen_fd < 0) {
+                        throw std::system_error(EBADF, std::generic_category(), "TcpService closed");
+                    }
+                    throw std::runtime_error("accept failed");
+                }
+                co_return std::move(result.value);
             }
 
             private:

@@ -33,12 +33,23 @@ namespace Coro {
             Task<void> run() {
                 m_stop.store(false);
                 while (!m_stop.load()) {
-                    auto stream = co_await m_service.accept();
+                    TcpStream stream{-1};
+                    try {
+                        stream = co_await m_service.accept(std::chrono::milliseconds(100));
+                    } catch (const TimeoutException&) {
+                        continue;
+                    } catch (...) {
+                        break;
+                    }
+                    if (m_stop.load()) break;
                     handle_client(std::move(stream));
                 }
             }
 
-            void stop() { m_stop.store(true); }
+            void stop() {
+                m_stop.store(true);
+                m_service.close();
+            }
             bool is_stopped() const { return m_stop.load(); }
 
             TcpService& service() { return m_service; }
