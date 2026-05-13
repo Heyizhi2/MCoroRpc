@@ -67,7 +67,6 @@ Coro::Task<void> runClientRequests(int client_id, std::shared_ptr<Coro::RpcChann
 
 Coro::Task<void> runSingleClient(int client_id, const std::string& host, int port) {
     auto channel = std::make_shared<Coro::RpcChannel>(host, port);
-    channel->setTimeout(30000);
     
     try {
         co_await channel->connect();
