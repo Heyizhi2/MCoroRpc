@@ -224,15 +224,25 @@ Coro::Task<void> RpcProvider::registerToZk() {
     
     std::string addr = m_ip + ":" + std::to_string(m_port);
     
+    auto ignoreExists = [](auto result) -> ZkResult {
+        if (result.rc == ZNODEEXISTS) {
+            return ZkResult{ZOK, "", ""};
+        }
+        return result;
+    };
+    
+    // 先创建 /rpc 父节点（持久节点）
+    ignoreExists(co_await m_zkClient->create("/rpc", "", 0));
+    
     // 创建 /rpc/services 根节点（持久节点）
-    co_await m_zkClient->create("/rpc/services", "", 0);
+    ignoreExists(co_await m_zkClient->create("/rpc/services", "", 0));
     
     // 为每个服务创建临时子节点
     for (auto& [service_name, info] : m_dispatcher->getServices()) {
         std::string service_path = "/rpc/services/" + service_name;
         
         // 先创建服务节点（持久节点）
-        co_await m_zkClient->create(service_path, "", 0);
+        ignoreExists(co_await m_zkClient->create(service_path, "", 0));
         
         // 再创建服务实例节点（临时顺序节点）
         // 节点路径: /rpc/services/{service_name}/{ip:port}
@@ -241,8 +251,8 @@ Coro::Task<void> RpcProvider::registerToZk() {
         
         if (result.ok()) {
             m_registered = true;
-            // fprintf(stderr, "[Provider] Registered service instance: %s -> %s\n", 
-            //        service_path.c_str(), addr.c_str());
+            fprintf(stderr, "[Provider] Registered service instance: %s -> %s\n", 
+                   service_path.c_str(), addr.c_str());
         }
     }
 }
@@ -388,28 +398,28 @@ Coro::Task<void> RpcProvider::start() {
     // 启动多个 worker 协程作为消费者
     //printf("[Provider] Starting %d workers...\n", m_worker_count);
     for (int i = 0; i < m_worker_count; ++i) {
-        auto worker = [this, i]() -> Coro::Task<void> {
-           fmt::println("[Provider] Worker {} started\n", i);
+        auto worker = [this](int id) -> Coro::Task<void> {
+           fmt::println("[Provider] Worker {} started\n", id);
             fflush(stdout);
             while (!m_stop.load()) {
                 try {
                     auto stream = co_await this->m_client_channel->recv();
-                    // printf("[Provider] Worker %d: got client fd=%d\n", i, stream.fd());
+                    // printf("[Provider] Worker %d: got client fd=%d\n", id, stream.fd());
                     // fflush(stdout);
                     co_await this->handleClient(std::move(stream));
-                    // printf("[Provider] Worker %d: handleClient finished\n", i);
+                    // printf("[Provider] Worker %d: handleClient finished\n", id);
                     // fflush(stdout);
                 } catch (const ChannelClosedException& e) {
-                    //printf("[Provider] Worker %d: channel closed\n", i);
+                    //printf("[Provider] Worker %d: channel closed\n", id);
                     break;
                 } catch (...) {
-                   // printf("[Provider] Worker %d: exception\n", i);
+                   // printf("[Provider] Worker %d: exception\n", id);
                 }
             }
-            // printf("[Provider] Worker %d: exiting\n", i);
+            // printf("[Provider] Worker %d: exiting\n", id);
             // fflush(stdout);
         };
-        worker().schedule();
+        worker(i).schedule();
     }
     
     // accept 循环作为生产者
