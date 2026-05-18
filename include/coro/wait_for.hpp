@@ -43,19 +43,18 @@ struct WaitForResult<void> {
 template<typename T>
 auto wait_for(Task<T> task, std::chrono::milliseconds timeout) -> Task<WaitForResult<T>> {
     WaitForResult<T> result;
-    std::atomic<bool> timeout_flag{false};
+    bool timeout_fired = false;
     std::atomic<bool> completed{false};
     
-    auto timeout_task = [&]() -> Task<void> {
-        co_await sleep_for(timeout);
-        if (!completed.load()) {
-            timeout_flag.store(true);
-            task.cancel();
+    auto timer = std::make_shared<Timer>(
+        types::Clock::now() + timeout,
+        [&completed, &timeout_fired]() {
+            if (!completed.load()) {
+                timeout_fired = true;
+            }
         }
-        co_return;
-    };
-    
-    timeout_task().schedule();
+    );
+    timer->start();
     
     try {
         if constexpr (std::is_void_v<T>) {
@@ -65,14 +64,11 @@ auto wait_for(Task<T> task, std::chrono::milliseconds timeout) -> Task<WaitForRe
         }
         result.ok = true;
     } catch (...) {
-        // error
     }
     
     completed.store(true);
-    
-    if (timeout_flag.load()) {
-        result.is_timeout = true;
-    }
+    timer->abort();
+    result.is_timeout = timeout_fired;
     
     co_return result;
 }

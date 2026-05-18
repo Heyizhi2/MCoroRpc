@@ -163,6 +163,9 @@ Coro::Task<ZkResult> getData(const std::string& path, bool watch = false);
      */
     void close();
 
+    //返回句柄
+    zhandle_t* getHandle() const { return m_zkHandle; }
+
 private:
     /**
      * @brief 待处理的异步操作结构

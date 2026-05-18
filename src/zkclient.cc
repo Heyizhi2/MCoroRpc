@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-26 14:26:04
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-03-26 20:46:59
+ * @LastEditTime: 2026-05-18 16:25:08
  * @FilePath: /MCoroRpc/src/zkclient.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -456,6 +456,70 @@ Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path, bool watch) 
     co_return result;
 }
 
+// ========== 新增：辅助结构与异步完成函数 ==========
+
+
+struct WatchDataCtx {
+    Coro::ZkClient* self;
+    std::string path;
+    std::function<void(const std::string&)> callback;
+};
+
+struct WatchChildrenCtx {
+    Coro::ZkClient* self;
+    std::string path;
+    std::function<void(const std::vector<std::string>&)> callback;
+};
+
+void watchDataCompletion(int rc, const char* value, int valueLen,
+                         const struct Stat* stat, const void* data) {
+    std::unique_ptr<WatchDataCtx> ctx(static_cast<WatchDataCtx*>(const_cast<void*>(data)));
+    if (!ctx || !ctx->self) return;
+
+    if (rc == ZOK) {
+        std::string val(value, valueLen);
+        if (ctx->callback) ctx->callback(val);
+    }
+
+    // 重新注册 watch，保持持续监听
+    auto* newCtx = new WatchDataCtx{ctx->self, ctx->path, ctx->callback};
+    int ret = zoo_aget(ctx->self->getHandle(), ctx->path.c_str(), 1,
+                       watchDataCompletion, newCtx);
+    if (ret != ZOK) {
+        delete newCtx;
+        fprintf(stderr, "[ZK Watcher] re-register data watch failed: %s, rc=%d\n",
+                ctx->path.c_str(), ret);
+    }
+}
+
+void watchChildrenCompletion(int rc, const struct String_vector* strings,
+                             const struct Stat* stat, const void* data) {
+    std::unique_ptr<WatchChildrenCtx> ctx(static_cast<WatchChildrenCtx*>(const_cast<void*>(data)));
+    if (!ctx || !ctx->self) return;
+
+    if (rc == ZOK) {
+        std::vector<std::string> children;
+        if (strings) {
+            for (int i = 0; i < strings->count; ++i)
+                children.push_back(strings->data[i]);
+        }
+        if (ctx->callback) ctx->callback(children);
+    }
+
+    // 重新注册 watch
+    auto* newCtx = new WatchChildrenCtx{ctx->self, ctx->path, ctx->callback};
+    int ret = zoo_aget_children2(ctx->self->getHandle(), ctx->path.c_str(), 1,
+                                 watchChildrenCompletion, newCtx);
+    if (ret != ZOK) {
+        delete newCtx;
+        fprintf(stderr, "[ZK Watcher] re-register child watch failed: %s, rc=%d\n",
+                ctx->path.c_str(), ret);
+    }
+}
+
+
+
+
 /**
  * @brief 处理 watch 回调
  * @param type 事件类型
@@ -465,43 +529,39 @@ Coro::Task<ZkResult> ZkClient::getChildren(const std::string& path, bool watch) 
  */
 void ZkClient::processWatcher(int type, int state, const char* path) {
     if (!path || !m_zkHandle) {
-        fprintf(stderr, "[ZK Watcher] path=%s or handle=null, type=%d\n", 
+        fprintf(stderr, "[ZK Watcher] path=%s or handle=null, type=%d\n",
                 path ? path : "null", type);
         return;
     }
-    
+
     std::string pathStr(path);
-    // fprintf(stderr, "[ZK Watcher] processWatcher called: type=%d, path=%s\n", type, pathStr.c_str());
-    
+
     if (type == ZOO_CHANGED_EVENT) {
         std::lock_guard<std::mutex> lock(m_watcherMutex);
         auto it = m_dataWatchers.find(pathStr);
         if (it != m_dataWatchers.end()) {
-            char buf[4096];
-            int len = sizeof(buf);
-            Stat stat;
-            int rc = zoo_get(m_zkHandle, pathStr.c_str(), 0, buf, &len, &stat);
-            if (rc == ZOK) {
-                it->second(std::string(buf, len));
+            auto callback = it->second;  // 拷贝回调
+            auto* ctx = new WatchDataCtx{this, pathStr, callback};
+            int rc = zoo_aget(m_zkHandle, pathStr.c_str(), 1,
+                              watchDataCompletion, ctx);
+            if (rc != ZOK) {
+                delete ctx;
+                fprintf(stderr, "[ZK Watcher] zoo_aget failed: %s, rc=%d\n",
+                        pathStr.c_str(), rc);
             }
-            // 重新注册 watch
-            zoo_get(m_zkHandle, pathStr.c_str(), 1, nullptr, nullptr, nullptr);
         }
     } else if (type == ZOO_CHILD_EVENT) {
         std::lock_guard<std::mutex> lock(m_watcherMutex);
         auto it = m_childrenWatchers.find(pathStr);
         if (it != m_childrenWatchers.end()) {
-            String_vector children;
-            children.data = nullptr;
-            children.count = 0;
-            int rc = zoo_get_children(m_zkHandle, pathStr.c_str(), 1, &children);
-            if (rc == ZOK) {
-                std::vector<std::string> childList;
-                for (int i = 0; i < children.count; ++i) {
-                    childList.push_back(children.data[i]);
-                }
-                deallocate_String_vector(&children);
-                it->second(childList);
+            auto callback = it->second;  // 拷贝回调
+            auto* ctx = new WatchChildrenCtx{this, pathStr, callback};
+            int rc = zoo_aget_children2(m_zkHandle, pathStr.c_str(), 1,
+                                        watchChildrenCompletion, ctx);
+            if (rc != ZOK) {
+                delete ctx;
+                fprintf(stderr, "[ZK Watcher] zoo_aget_children2 failed: %s, rc=%d\n",
+                        pathStr.c_str(), rc);
             }
         }
     }

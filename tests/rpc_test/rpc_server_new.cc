@@ -23,6 +23,7 @@ void signal_handler(int sig) {
     if (g_server) {
         g_server->stop();
     }
+    exit(0);
 }
 
 void print_usage(const char* prog) {

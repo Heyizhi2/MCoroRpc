@@ -453,20 +453,9 @@ Coro::Task<void> RpcProvider::start() {
 void RpcProvider::stop() {
     m_stop.store(true);
     m_registered = false;
-    
     // 从 ZK 删除注册的节点（使用临时协程）
     if (m_zkClient && m_zkClient->isConnected()) {
-        auto unregTask = [this]() -> Coro::Task<void> {
-            for (auto& [service_name, info] : m_dispatcher->getServices()) {
-                std::string service_path = "/rpc/services/" + service_name;
-                auto result = co_await m_zkClient->deleteNode(service_path);
-                // fprintf(stderr, "[Provider] Unregistered: %s, rc=%d\n", service_path.c_str(), result.rc);
-            }
-        };
-        unregTask().schedule();
-        
-        // 等待一小段时间让协程执行
-        usleep(100000);
+        m_zkClient->close();
     }
     
     // 先关闭 TCP service，让 accept 循环退出

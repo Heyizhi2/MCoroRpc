@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-28 13:53:35
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-04-23 18:58:27
+ * @LastEditTime: 2026-05-18 16:55:11
  * @FilePath: /MCoroRpc/tests/rpc_test/rpc_client_new.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -28,9 +28,7 @@ int main() {
     auto client = std::make_shared<Coro::RpcClient>(options);
 
     client->setServiceStatusCallback([](const std::string& serviceName, bool isAlive) {
-        printf("[Client] Service %s is %s\n", 
-               serviceName.c_str(), isAlive ? "UP" : "DOWN");
-        fflush(stdout);
+        
     });
 
     auto clientTask = [client]() -> Coro::Task<void> {
@@ -64,7 +62,7 @@ int main() {
             }
             fflush(stdout);
             
-            co_await Coro::sleep_for(std::chrono::milliseconds(500));
+           co_await Coro::sleep_for(std::chrono::milliseconds(500));
         }
 
         client->disconnect();

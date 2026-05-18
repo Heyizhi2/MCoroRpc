@@ -354,6 +354,9 @@ public:
      */
     bool isConnected() const { return m_connected; }
 
+    // 在 ServiceDiscovery 的 public 区域添加
+    ZkClient::ptr getZkClient() const { return m_zkClient; }
+
 private:
     std::string m_zkHost = "127.0.0.1:2181";    ///< ZooKeeper 地址
     int m_timeout = 30000;                      ///< 超时时间

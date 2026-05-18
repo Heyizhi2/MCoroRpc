@@ -91,9 +91,7 @@ Coro::Task<void> RpcClient::connectWithDiscovery(const std::string& serviceName)
     
     m_serviceName = serviceName;
     
-    auto instances = co_await m_discovery->getInstances(serviceName);
-    updateInstances(instances);
-    
+    // 设置服务 watcher（用于后续实例变化）
     m_discovery->setServiceWatcher(serviceName,
         [this](const std::vector<std::string>& newInstances) {
             updateInstances(newInstances);
@@ -101,6 +99,27 @@ Coro::Task<void> RpcClient::connectWithDiscovery(const std::string& serviceName)
                 m_statusCallback(m_serviceName, !newInstances.empty());
             }
         });
+    
+    // 尝试获取实例列表
+    std::string path = "/rpc/services/" + serviceName;
+    auto result = co_await m_discovery->getZkClient()->getChildren(path, true);
+    
+    //如果节点还不存在（服务端未启动），轮询等待
+    while (result.rc == ZNONODE) {
+        co_await Coro::sleep_for(std::chrono::milliseconds(500));  // 每 500ms 重试一次
+        result = co_await m_discovery->getZkClient()->getChildren(path, true);
+    }
+    
+    // 解析并更新实例列表
+    if (result.ok()) {
+        std::vector<std::string> instances;
+        std::stringstream ss(result.data);
+        std::string inst;
+        while (std::getline(ss, inst, ',')) {
+            if (!inst.empty()) instances.push_back(inst);
+        }
+        updateInstances(instances);
+    }
     
     m_connected.store(!m_instances.empty());
     co_return;
@@ -203,12 +222,14 @@ Coro::Task<std::shared_ptr<RpcChannel>> RpcClient::getOrCreateChannel(const std:
  * @note 自动关闭已不在列表中的实例连接，清空失败地址集合
  */
 void RpcClient::updateInstances(const std::vector<std::string>& instances) {
+    //加锁
     std::unique_lock lock(m_instancesMutex);
-    
+    //获取新的集合
     std::set<std::string> newSet(instances.begin(), instances.end());
     std::vector<std::string> oldInstances = m_instances;
+    //更新实例表
     m_instances = instances;
-    
+    //更新连接池
     for (auto it = m_channels.begin(); it != m_channels.end(); ) {
         if (newSet.find(it->first) == newSet.end()) {
             if (it->second) {
@@ -268,23 +289,27 @@ Coro::Task<bool> RpcClient::callMethodAsync(
     if (!controller) {
         co_return false;
     }
-    
+    //从zookeeper获取最新的节点列表
     std::vector<std::string> availableInstances;
+    //失效地址列表
     std::set<std::string> failedAddrsSnapshot;
     
     {
         std::lock_guard<std::mutex> lock(m_instancesMutex);
+        //当前zookeeper无可用节点
         if (m_instances.empty()) {
             controller->SetFailed("no available instances");
             co_return false;
         }
         
         {
+            //获取失败节点
             std::lock_guard<std::mutex> failedLock(m_failedMutex);
             failedAddrsSnapshot = m_failedAddrs;
         }
         
         for (const auto& addr : m_instances) {
+            //过滤掉失败节点
             if (failedAddrsSnapshot.find(addr) == failedAddrsSnapshot.end()) {
                 availableInstances.push_back(addr);
             }
@@ -296,6 +321,7 @@ Coro::Task<bool> RpcClient::callMethodAsync(
         }
     }
     
+    //通过负载均衡获取当前访问的节点地址。
     std::string targetAddr = m_lb->select(availableInstances);
     
     auto channel = co_await getOrCreateChannel(targetAddr);
