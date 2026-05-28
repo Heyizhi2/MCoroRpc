@@ -1,3 +1,11 @@
+/*
+ * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
+ * @Date: 2026-03-28 13:53:21
+ * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
+ * @LastEditTime: 2026-05-20 20:59:30
+ * @FilePath: /MCoroRpc/tests/rpc_test/rpc_server_new.cc
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 /**
  * @file rpc_server_new.cc
  * @brief 使用新版 RpcServer 的示例 - 支持命令行参数
@@ -37,10 +45,11 @@ void print_usage(const char* prog) {
 }
 
 int main(int argc, char* argv[]) {
-    int port = 8000;
+   int port = 8000;
     std::string zkHost = "127.0.0.1:2181";
     std::string ip = "127.0.0.1";
-    
+    int worker_count = 4;   // 新增，默认值
+
     // 解析命令行参数
     if (argc >= 2) {
         if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
@@ -53,8 +62,13 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-    if (argc >= 3) {
-        zkHost = argv[2];
+    
+    if (argc >= 3) {       // 新增：解析 worker 数量
+        worker_count = atoi(argv[2]);
+        if (worker_count <= 0) worker_count = 4;
+    }
+    if (argc >= 4) {
+        zkHost = argv[3];
     }
     
     printf("=== RPC Server (Multi-Instance Demo) ===\n");
@@ -71,6 +85,7 @@ int main(int argc, char* argv[]) {
     CalculatorServiceImpl calcService;
     server.registerService(&calcService);
 
+    server.setWorkerCount(worker_count);
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 

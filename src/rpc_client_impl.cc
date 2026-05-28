@@ -94,6 +94,7 @@ Coro::Task<void> RpcClient::connectWithDiscovery(const std::string& serviceName)
     // 设置服务 watcher（用于后续实例变化）
     m_discovery->setServiceWatcher(serviceName,
         [this](const std::vector<std::string>& newInstances) {
+            //注册回调
             updateInstances(newInstances);
             if (m_statusCallback) {
                 m_statusCallback(m_serviceName, !newInstances.empty());
@@ -203,7 +204,12 @@ Coro::Task<std::shared_ptr<RpcChannel>> RpcClient::getOrCreateChannel(const std:
     channel->setTimeout(m_options.timeoutMs);
     
     try {
-        co_await channel->connect();
+        auto connect_task = channel->connect();
+        auto con_result = co_await wait_for(std::move(connect_task), 
+                                        std::chrono::milliseconds(m_options.timeoutMs));
+        if (con_result.is_timeout) {
+            co_return std::shared_ptr<RpcChannel>(nullptr);  // 连接超时，下次重试
+        }
         
         {
             std::lock_guard<std::mutex> lock(m_instancesMutex);
@@ -326,6 +332,17 @@ Coro::Task<bool> RpcClient::callMethodAsync(
     
     auto channel = co_await getOrCreateChannel(targetAddr);
     if (!channel) {
+        // 不立即拉黑，先重试
+        for (int retry = 0; retry < m_options.maxRetries; ++retry) {
+            co_await Coro::sleep_for(std::chrono::milliseconds(100 * (retry + 1)));
+            channel = co_await getOrCreateChannel(targetAddr);
+            if (channel) break;
+        }
+        if (!channel) {
+            markUnavailable(targetAddr);  // 全部重试失败，再拉黑
+            controller->SetFailed("failed to connect to " + targetAddr);
+            co_return false;
+        }
         markUnavailable(targetAddr);
         controller->SetFailed("failed to connect to " + targetAddr);
         co_return false;
@@ -340,6 +357,21 @@ Coro::Task<bool> RpcClient::callMethodAsync(
         co_await channel->CallMethodAsync(method, ctrl, request, response, nullptr);
         
         if (ctrl->Failed()) {
+            // 加入重试逻辑
+            int maxRetries = m_options.maxRetries;  // 例如 3 次
+            for (int retry = 0; retry <= maxRetries; ++retry) {
+                co_await channel->CallMethodAsync(method, ctrl, request, response, nullptr);
+                if (!ctrl->Failed()) {
+                    co_return true;  // 成功，直接返回
+                }
+                // 失败后，重新获取 channel（可能重建连接）
+                if (retry < maxRetries) {
+                    channel = co_await getOrCreateChannel(targetAddr);
+                }
+        }
+        // 全部重试失败，再标记故障
+        markUnavailable(targetAddr);
+        co_return false;
             markUnavailable(targetAddr);
             co_return false;
         }

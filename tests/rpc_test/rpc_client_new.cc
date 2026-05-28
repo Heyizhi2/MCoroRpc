@@ -2,7 +2,7 @@
  * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
  * @Date: 2026-03-28 13:53:35
  * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
- * @LastEditTime: 2026-05-18 16:55:11
+ * @LastEditTime: 2026-05-20 16:13:25
  * @FilePath: /MCoroRpc/tests/rpc_test/rpc_client_new.cc
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -19,7 +19,7 @@
 int main() {
     printf("=== RPC Client New (Multi-Instance) ===\n\n");
     fflush(stdout);
-
+    //配置clinet的基础配置
     Coro::RpcClientOptions options;
     options.zkHost = "127.0.0.1:2181";
     options.timeoutMs = 3000;
@@ -31,6 +31,8 @@ int main() {
         
     });
 
+
+    //请求协程
     auto clientTask = [client]() -> Coro::Task<void> {
         printf("[Client] Connecting via discovery...\n");
         fflush(stdout);

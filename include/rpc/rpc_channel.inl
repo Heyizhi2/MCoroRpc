@@ -468,7 +468,7 @@ inline Task<void> RpcChannel::CallMethodAsync(
     auto io_result = co_await wait_for([&]() -> Task<void> {
         co_await m_stream->write(data);
         co_await m_stream->readToBuffer();
-    }(), std::chrono::milliseconds(timeout_ms));
+    }(), std::chrono::milliseconds(timeout_ms/1000));
 
     if (io_result.is_timeout) {
         ctrl->SetFailed("rpc timeout");

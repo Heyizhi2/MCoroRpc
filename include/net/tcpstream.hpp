@@ -1,24 +1,11 @@
-/**
- * @file tcpstream.hpp
- * @brief TCP 流
- * 
- * 提供TCP连接的读写功能：
- * - 异步读写数据
- * - 读写缓冲区管理
- * - 自动本地地址获取
- * 
- * 使用示例：
- * @code
- * auto stream = co_await connect("127.0.0.1", 8080);
- * 
- * // 读取数据
- * auto data = co_await stream.read(1024);
- * 
- * // 写入数据
- * co_await stream.write(buffer);
- * @endcode
+/*
+ * @Author: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
+ * @Date: 2026-05-13 20:44:47
+ * @LastEditors: 来自火星的码农 15122322+heyzhi@user.noreply.gitee.com
+ * @LastEditTime: 2026-05-21 16:19:06
+ * @FilePath: /MCoroRpc/include/net/tcpstream.hpp
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
-
 #pragma once
 #include <cerrno>
 #include <cstddef>
@@ -34,130 +21,47 @@
 #include "tcp/net_addr.h"
 
 namespace Coro {
-    namespace net {
-        /**
-         * @brief TCP流
-         * @details 封装TCP socket，提供异步读写功能
-         */
-        class TcpStream:public Noncopyable{
-            public:
-            /** @brief 缓冲区类型 */
-            using buffer_type=std::vector<char>;
+namespace net {
 
-            /**
-             * @brief 默认构造函数
-             */
-            TcpStream();
-            
-            /**
-             * @brief 构造函数
-             * @param fd socket文件描述符
-             * @param bufferSize 读写缓冲区大小，默认65536
-             */
-            explicit TcpStream(int fd, int64_t bufferSize = 65536);
+class TcpStream : public Noncopyable {
+public:
+    using buffer_type = std::vector<char>;
 
-            TcpStream(const TcpStream&)=delete;
-            TcpStream& operator=(const TcpStream&)=delete;
+    TcpStream();
+    explicit TcpStream(int fd, int64_t bufferSize = 65536);
+    TcpStream(const TcpStream&) = delete;
+    TcpStream& operator=(const TcpStream&) = delete;
+    TcpStream(TcpStream&& other) noexcept;
+    TcpStream& operator=(TcpStream&& other) noexcept;
 
-            /**
-             * @brief 移动构造函数
-             */
-            TcpStream(TcpStream && other) noexcept;
+    void close();
+    int fd() const { return m_fd; }
+    const sockaddr_storage& local_addr() const { return m_local_addr; }
+    NetAddr::s_ptr peerAddr() const;
 
-            /**
-             * @brief 移动赋值运算符
-             */
-            TcpStream& operator=(TcpStream&& other) noexcept;
+    TcpBuffer::s_ptr getReadBuffer() const { return m_read_buffer; }
+    TcpBuffer::s_ptr getWriteBuffer() const { return m_write_buffer; }
 
+    Task<buffer_type> read(ssize_t size = -1);
+    Task<ssize_t> readToBuffer();
 
-            /**
-             * @brief 关闭连接
-             */
-            void close();
+    // 原有接口
+    Task<> write(const buffer_type& buffer);
+    // 新增：直接接受 string_view，避免调用方构造临时 vector
+    Task<> write(std::string_view data);
 
-            /**
-             * @brief 获取文件描述符
-             */
-            int fd()const{return  m_fd;}
+    Task<> writeFromBuffer();
+    Task<buffer_type> readProtocolMessage(int32_t& pk_len);
+    ~TcpStream() { close(); }
 
-            /**
-             * @brief 获取本地地址
-             */
-            const sockaddr_storage& local_addr()const{return m_local_addr;}
+private:
+    Task<buffer_type> read_until_eof();
 
-            /**
-             * @brief 获取对端地址
-             */
-            NetAddr::s_ptr peerAddr() const;
+    int m_fd{-1};
+    sockaddr_storage m_local_addr{};
+    TcpBuffer::s_ptr m_read_buffer;
+    TcpBuffer::s_ptr m_write_buffer;
+};
 
-            /**
-             * @brief 获取读缓冲区
-             */
-            TcpBuffer::s_ptr getReadBuffer() const { return m_read_buffer; }
-            
-            /**
-             * @brief 获取写缓冲区
-             */
-            TcpBuffer::s_ptr getWriteBuffer() const { return m_write_buffer; }
-
-            /**
-             * @brief 读取数据（协程）
-             * @param size 读取字节数，-1表示读到EOF
-             * @return Task<buffer_type> 读取的数据
-             */
-            Task<buffer_type> read(ssize_t size = -1);
-
-            /**
-             * @brief 读取数据到内部缓冲区（协程）
-             * @return Task<ssize_t> 读取的字节数
-             */
-            Task<ssize_t> readToBuffer();
-
-            /**
-             * @brief 写入数据（协程）
-             * @param buffer 要写入的数据
-             * @return Task<> 协程对象
-             */
-            Task<> write(const buffer_type& buffer);
-
-            /**
-             * @brief 从内部缓冲区写入（协程）
-             * @return Task<> 协程对象
-             */
-            Task<> writeFromBuffer();
-
-            /**
-             * @brief 读取完整协议消息（协程）
-             * @param pk_len 输出：协议数据包长度
-             * @return Task<buffer_type> 完整的协议消息数据
-             * @details 先读取 5 字节获取 START 和 pk_len，再根据长度读取完整数据包
-             */
-            Task<buffer_type> readProtocolMessage(int32_t& pk_len);
-
-            /**
-             * @brief 析构函数
-             */
-            ~TcpStream(){close();}
-
-
-            private:
-            /**
-             * @brief 读到EOF
-             */
-            Task<buffer_type> read_until_eof();
-            
-            private:
-            /** @brief socket文件描述符 */
-            int m_fd{-1};
-            
-            /** @brief 本地地址 */
-            sockaddr_storage m_local_addr{};
-            
-            /** @brief 读缓冲区 */
-            TcpBuffer::s_ptr m_read_buffer;
-            
-            /** @brief 写缓冲区 */
-            TcpBuffer::s_ptr m_write_buffer;
-        };
-    }
-}
+} // namespace net
+} // namespace Coro

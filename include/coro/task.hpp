@@ -237,7 +237,9 @@ namespace Coro {
             void await_suspend(std::coroutine_handle<_promise> parent) const noexcept {
                 assert(!self_handle.promise().parent());
                 parent.promise().set_state(Handle::State::SUSPEND);
+                //记录父协程
                 self_handle.promise().set_parent(&parent.promise());
+                //将自身协程放入eventloop中
                 self_handle.promise().schedule();
             }
             
@@ -278,6 +280,7 @@ namespace Coro {
          */
         auto operator co_await() const & noexcept {
             struct Awaiter : public AwaiterBase {
+                 //执行完成后返回一个结果
                 decltype(auto) await_resume() {
                     if (!AwaiterBase::self_handle) [[unlikely]] {
                         throw ExceptionInvalidFuture();
@@ -293,6 +296,7 @@ namespace Coro {
          */
         auto operator co_await() const && noexcept {
             struct Awaiter : public AwaiterBase {
+                //执行完成后返回一个结果
                 decltype(auto) await_resume() {
                     if (!AwaiterBase::self_handle) [[unlikely]] {
                         throw ExceptionInvalidFuture();
@@ -367,49 +371,5 @@ namespace Coro {
         coro_handle m_handle;
     };
 
-    /**
-     * @brief 任务组
-     * @tparam ResultType 任务返回值类型
-     * 
-     * 用于管理多个协程任务，提供批量操作能力
-     */
-    template<typename ResultType = void>
-    class TaskGroup {
-    public:
-        TaskGroup() = default;
-        
-        /**
-         * @brief 创建并添加新任务
-         * @tparam F 函数类型
-         * @param func 返回Task的函数
-         * @return 创建的Task对象
-         */
-        template<typename F>
-        Task<ResultType> spawn(F&& func) {
-            auto task = func();
-            m_tasks.push_back(std::move(task));
-            return task;
-        }
-        
-        /**
-         * @brief 取消所有任务
-         */
-        void cancel() {
-            for (auto& task : m_tasks) {
-                task.cancel();
-            }
-        }
-        
-        /**
-         * @brief 清空任务组
-         */
-        void clear() {
-            m_tasks.clear();
-        }
-
-    private:
-        /** @brief 任务列表 */
-        std::vector<Task<ResultType>> m_tasks;
-    };
 
 }

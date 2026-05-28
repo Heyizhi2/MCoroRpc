@@ -53,7 +53,10 @@ void RpcDispatcher::registerService(google::protobuf::Service* service) {
 
 /**
  * @brief 解析完整方法名
- * @param full_name 完整方法名(如 "ServiceName.MethodName")
+ * @param full_name 完整方法名(如 "S
+ 
+ 
+ erviceName.MethodName")
  * @param service_name 输出：服务名
  * @param method_name 输出：方法名
  * @return 解析是否成功
